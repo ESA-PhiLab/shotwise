@@ -205,3 +205,19 @@ def test_constructor_rejects_invalid_configuration(
     base_kwargs.update(kwargs)
     with pytest.raises(ValueError, match=message_part):
         SupportShot(**base_kwargs)
+
+
+def test_early_stopping_sets_flag(backend, labels):
+    from shotwise.allocation.stopping import DualChangeStopping
+
+    model = SupportShot(
+        total_budget=200,
+        pilot_shots_per_entry=20,
+        rounds=5,
+        stopping=DualChangeStopping(epsilon=1e9),
+        random_state=0,
+    )
+
+    model.fit(labels, backend)
+
+    assert model.stopped_early_
