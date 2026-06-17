@@ -64,7 +64,7 @@ def test_fit_pilot_only_initializes_state(
     assert record.budget == 60
     assert record.total_shots_spent == 60
     assert record.score_sum is None
-    assert record.relative_dual_change is None
+    assert record.dual_change is None
     assert record.stopped_early is False
     assert np.allclose(record.kernel_matrix, model.kernel_)
 
@@ -122,7 +122,7 @@ def test_fit_with_large_stopping_epsilon_stops_early(
     assert len(model.history_) == 2  # pilot + first adaptive round
     assert len(model.score_history_) == 1
     assert model.history_[-1].stopped_early is True
-    assert model.history_[-1].relative_dual_change is not None
+    assert model.history_[-1].dual_change is not None
     assert model.remaining_budget_ is not None
     assert model.remaining_budget_ > 0
     assert model.store_.total_shots_spent() < 210
