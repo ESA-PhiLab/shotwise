@@ -19,6 +19,7 @@ from shotwise.allocation.policy import (
 )
 from shotwise.allocation.scores import ScoreComponents, compute_supportshot_scores
 from shotwise.learning.svm import SVMState, fit_precomputed_svm_state
+from shotwise.storage.history import History
 from shotwise.storage.kernel_store import KernelStore
 from shotwise.utils.matrix import num_upper_triangle_entries, upper_triangle_only
 
@@ -50,7 +51,7 @@ class SupportShotRoundRecord:
     num_support
         Number of support vectors after fitting the SVM on the updated
         kernel estimate.
-    relative_dual_change
+    dual_change
         Relative change in the signed dual vector compared with the previous
         round. ``None`` for the pilot phase.
     stopped_early
@@ -66,7 +67,7 @@ class SupportShotRoundRecord:
     total_shots_spent: int
     score_sum: float | None
     num_support: int
-    relative_dual_change: float | None
+    dual_change: float | None
     stopped_early: bool
 
 
@@ -202,7 +203,7 @@ class SupportShot:
             )
 
         self.store_ = KernelStore(n, diagonal_value=1.0)
-        self.history_ = []
+        self.history_ = History()
         self.score_history_ = []
         self.stopped_early_ = False
 
@@ -232,7 +233,7 @@ class SupportShot:
                 total_shots_spent=self.store_.total_shots_spent(),
                 score_sum=None,
                 num_support=state.num_support,
-                relative_dual_change=None,
+                dual_change=None,
                 stopped_early=False,
             )
         )
@@ -301,7 +302,7 @@ class SupportShot:
                     total_shots_spent=self.store_.total_shots_spent(),
                     score_sum=score_sum,
                     num_support=state.num_support,
-                    relative_dual_change=rel_change,
+                    dual_change=rel_change,
                     stopped_early=stopped_early,
                 )
             )
