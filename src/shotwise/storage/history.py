@@ -4,7 +4,8 @@ History tracking for ShotWise algorithms.
 Stores per-round state of the algorithm:
 - kernel estimates
 - allocations
-- dual evolution- dual stability
+- dual evolution
+- dual stability
 
 This is a *pure data container* (no evaluation logic).
 """
@@ -83,7 +84,13 @@ class History:
     # -----------------------------------
 
     def append(self, entry: HistoryEntry) -> None:
-        self._entries.append(entry)
+        """
+        Append a *safe copy* of the entry.
+
+        This enforces immutability of stored history even if the caller
+        later mutates the original object.
+        """
+        self._entries.append(self._copy_entry(entry))
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -93,6 +100,27 @@ class History:
 
     def __iter__(self) -> Iterator[HistoryEntry]:
         return iter(self._entries)
+
+    # -----------------------------------
+    # internal helpers
+    # -----------------------------------
+
+    def _copy_entry(self, entry):
+        """
+        Create a defensive copy of an entry.
+
+        Works generically for dataclasses like SupportShotRoundRecord.
+        Copies any numpy arrays it finds.
+        """
+        data = {}
+
+        for key, value in entry.__dict__.items():
+            if isinstance(value, np.ndarray):
+                data[key] = value.copy()
+            else:
+                data[key] = value
+
+        return type(entry)(**data)
 
     # -----------------------------------
     # convenience
@@ -121,6 +149,6 @@ class History:
 
     def to_list(self) -> List[HistoryEntry]:
         """
-        Return raw entries (useful for serialization / analysis).
+        Return deep copies of all entries (safe for external use).
         """
         return [e.copy() for e in self._entries]
