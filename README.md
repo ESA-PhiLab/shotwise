@@ -45,3 +45,16 @@ This leads to:
 ```bash
 pip install shotwise
 ``
+
+
+## Authentication
+
+ShotWise does NOT manage IBM Quantum authentication.
+
+Please configure your Qiskit account using:
+
+    qiskit_ibm_runtime save-account --token YOUR_TOKEN
+
+or environment variables.
+
+Never store tokens in code.
