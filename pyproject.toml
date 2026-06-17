@@ -55,6 +55,11 @@ pennylane = [
   "pennylane>=0.45",
   "pennylane-qiskit>=0.45"
 ]
+examples = [
+  "pandas>=2.2",
+  "matplotlib>=3.8",
+  "seaborn>=0.13"
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
