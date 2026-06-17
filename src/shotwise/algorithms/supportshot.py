@@ -18,6 +18,7 @@ from shotwise.allocation.policy import (
     allocate_multinomial,
 )
 from shotwise.allocation.scores import ScoreComponents, compute_supportshot_scores
+from shotwise.allocation.stopping import DualChangeStopping
 from shotwise.learning.svm import SVMState, fit_precomputed_svm_state
 from shotwise.storage.history import History
 from shotwise.storage.kernel_store import KernelStore
@@ -118,6 +119,7 @@ class SupportShot:
         rounds: int = 3,
         lambda_weight: float = 0.5,
         svm_c: float = 1.0,
+        stopping: DualChangeStopping | None = None,
         stopping_epsilon: float | None = None,
         use_confidence_weighting: bool = False,
         sigma_floor: float = 1e-8,
@@ -144,6 +146,17 @@ class SupportShot:
                 "stopping_epsilon must be non-negative when provided, "
                 f"got {stopping_epsilon}."
             )
+        # -----------------------------------
+        # Backward compatibility handling
+        # -----------------------------------
+        if stopping is not None and stopping_epsilon is not None:
+            raise ValueError(
+                "Provide either 'stopping' or 'stopping_epsilon', not both."
+            )
+
+        if stopping is None and stopping_epsilon is not None:
+            # create stopping policy automatically
+            stopping = DualChangeStopping(epsilon=stopping_epsilon)
         if allocation_method not in {"multinomial", "deterministic"}:
             raise ValueError(
                 "allocation_method must be either 'multinomial' or "
@@ -155,6 +168,7 @@ class SupportShot:
         self.rounds = int(rounds)
         self.lambda_weight = float(lambda_weight)
         self.svm_c = float(svm_c)
+        self.stopping = stopping
         self.stopping_epsilon = stopping_epsilon
         self.use_confidence_weighting = bool(use_confidence_weighting)
         self.sigma_floor = float(sigma_floor)
@@ -287,9 +301,13 @@ class SupportShot:
                 previous_signed_dual,
                 state.signed_dual,
             )
-            stopped_early = (
-                self.stopping_epsilon is not None and rel_change < self.stopping_epsilon
-            )
+            if self.stopping is not None:
+                stopped_early = self.stopping.should_stop(
+                    round_index=adaptive_round,
+                    dual_change=rel_change,
+                )
+            else:
+                stopped_early = False
 
             self.history_.append(
                 SupportShotRoundRecord(
