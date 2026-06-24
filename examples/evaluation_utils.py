@@ -117,24 +117,38 @@ def evaluate_estimated_kernel(
 ) -> dict[str, float | int | str]:
     """Evaluate an estimated kernel against the true-kernel SVM reference.
 
-    The returned record is designed to plug directly into a benchmark
-    ``pandas.DataFrame``.
+    This function reports both raw and normalized classifier-error metrics.
+
+    Notes
+    -----
+    To stay compatible with the old experimental code, the estimated classifier
+    is fitted on ``kernel_est`` but its decision values and margin are evaluated
+    on ``kernel_true`` when forming margin- and function-based comparison
+    metrics.
     """
     state_true = fit_precomputed_svm_state(kernel_true, y, c=c)
     state_est = fit_precomputed_svm_state(kernel_est, y, c=c)
 
+    # True classifier quantities
     norm_true = margin_from_signed_dual(kernel_true, state_true.signed_dual)
-    norm_est = margin_from_signed_dual(kernel_est, state_est.signed_dual)
     decision_true = decision_values_from_signed_dual(
         kernel_true,
         state_true.signed_dual,
         state_true.bias,
     )
+
+    # Old-code-compatible evaluation:
+    # evaluate estimated classifier on the TRUE kernel
+    norm_est = margin_from_signed_dual(kernel_true, state_est.signed_dual)
     decision_est = decision_values_from_signed_dual(
-        kernel_est,
+        kernel_true,
         state_est.signed_dual,
         state_est.bias,
     )
+
+    denom = norm_true + 1e-12
+    raw_margin_err = abs(norm_est - norm_true)
+    raw_func_rmse = rmse(decision_est, decision_true)
 
     record: dict[str, float | int | str] = {
         "method": method,
@@ -153,8 +167,12 @@ def evaluate_estimated_kernel(
             state_true.signed_dual,
             state_est.signed_dual,
         ),
-        "margin_err": abs(norm_est - norm_true),
-        "func_rmse": rmse(decision_est, decision_true),
+        # Raw metrics
+        "margin_err": raw_margin_err,
+        "func_rmse": raw_func_rmse,
+        # Normalized metrics (old benchmark style)
+        "margin_err_normalized": raw_margin_err / denom,
+        "func_rmse_normalized": raw_func_rmse / denom,
         "acc_train_vs_true": accuracy_against_true_classifier(
             decision_est,
             decision_true,
