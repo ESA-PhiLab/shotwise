@@ -40,7 +40,7 @@ ROUNDS = 50
 CLUSTER_STD = 0.2
 LAMBDA_WEIGHT = 0.5
 
-OUTPUT_PATH = Path("plots/saturation.pdf")
+OUTPUT_PATH = Path("outputs/saturation/saturation.pdf")
 
 
 # ============================================================
