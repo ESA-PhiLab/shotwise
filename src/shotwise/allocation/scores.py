@@ -38,16 +38,24 @@ class ScoreComponents:
     instability_probabilities
         Per-sample probabilities of active-set instability.
     sensitivity_matrix
-        Upper-triangular matrix of margin-sensitivity contributions.
+        Strict upper-triangular raw sensitivity matrix used before normalization.
+        In the current formulation, this is the variance-aware sensitivity score.
     instability_matrix
-        Upper-triangular matrix of active-set-instability contributions.
+        Strict upper-triangular raw instability matrix used before normalization.
+    normalized_sensitivity_matrix
+        Strict upper-triangular sensitivity matrix normalized over independent
+        upper-triangular entries.
+    normalized_instability_matrix
+        Strict upper-triangular instability matrix normalized over independent
+        upper-triangular entries.
     combined_matrix
-        Upper-triangular matrix before uncertainty weighting.
+        Strict upper-triangular convex combination of the normalized component
+        matrices.
     final_scores
-        Strict upper-triangular matrix used for shot allocation.
+        Strict upper-triangular matrix used for shot allocation. This is equal
+        to ``combined_matrix`` in the current formulation.
     uncertainty_weight
-        Full symmetric matrix of uncertainty weights
-        ``sqrt(p(1-p))``.
+        Full symmetric matrix ``sqrt(p(1-p))`` used inside the sensitivity term.
     """
 
     smoothed_probabilities: np.ndarray
@@ -57,6 +65,8 @@ class ScoreComponents:
     instability_probabilities: np.ndarray
     sensitivity_matrix: np.ndarray
     instability_matrix: np.ndarray
+    normalized_sensitivity_matrix: np.ndarray
+    normalized_instability_matrix: np.ndarray
     combined_matrix: np.ndarray
     final_scores: np.ndarray
     uncertainty_weight: np.ndarray
@@ -70,26 +80,7 @@ def compute_smoothed_probabilities(
     prior_failure: float = 1.0,
     diagonal_value: float = 1.0,
 ) -> np.ndarray:
-    """Compute smoothed Bernoulli probabilities from counts and shots.
-
-    Parameters
-    ----------
-    counts_matrix
-        Full symmetric matrix of cumulative Bernoulli successes.
-    shots_matrix
-        Full symmetric matrix of cumulative shot counts.
-    prior_success
-        Pseudocount added to the numerator.
-    prior_failure
-        Pseudocount added to the denominator through a Beta prior.
-    diagonal_value
-        Value assigned to the diagonal entries.
-
-    Returns
-    -------
-    np.ndarray
-        Full symmetric matrix of smoothed probabilities.
-    """
+    """Compute smoothed Bernoulli probabilities from counts and shots."""
     counts = np.asarray(counts_matrix, dtype=float)
     shots = np.asarray(shots_matrix, dtype=float)
     check_square_matrix(counts, name="counts_matrix")
@@ -118,12 +109,7 @@ def compute_variance_matrix(
     *,
     hardware_floor: float = 0.0,
 ) -> np.ndarray:
-    """Compute a full symmetric kernel variance proxy.
-
-    The off-diagonal entries use the Bernoulli variance
-    ``p(1-p) / N`` when ``N > 0`` and zero otherwise, optionally plus a
-    constant hardware variance floor.
-    """
+    """Compute a full symmetric kernel variance proxy."""
     probs = np.asarray(smoothed_probabilities, dtype=float)
     shots = np.asarray(shots_matrix, dtype=float)
     check_square_matrix(probs, name="smoothed_probabilities")
@@ -151,15 +137,7 @@ def compute_sigma_f(
     state: SVMState,
     variance_matrix: np.ndarray,
 ) -> np.ndarray:
-    """Compute per-sample uncertainty induced by kernel variance.
-
-    This matches the structure used in the original proof-of-concept:
-    for each training point i,
-
-        sigma_f[i]^2 = sum_j alpha_j^2 * Var[K_{ij}],
-
-    where ``alpha_j`` are the unsigned dual coefficients.
-    """
+    """Compute per-sample uncertainty induced by kernel variance."""
     variance = np.asarray(variance_matrix, dtype=float)
     check_square_matrix(variance, name="variance_matrix")
 
@@ -181,14 +159,7 @@ def compute_instability_probabilities(
     *,
     epsilon: float = 1e-9,
 ) -> np.ndarray:
-    """Compute probabilities of active-set instability.
-
-    The probability is modeled as
-
-        Phi(-delta_i / (sigma_f[i] + epsilon)),
-
-    where ``delta_i = y_i f(x_i) - 1`` is the margin residual.
-    """
+    """Compute probabilities of active-set instability."""
     sigma = np.asarray(sigma_f, dtype=float)
     if sigma.shape != (state.n_samples,):
         raise ValueError(
@@ -205,16 +176,15 @@ def compute_sensitivity_matrix(
     *,
     sigma_safe: np.ndarray | None = None,
     use_confidence_weighting: bool = False,
+    uncertainty_weight: np.ndarray | None = None,
 ) -> np.ndarray:
     """Compute the strict upper-triangular sensitivity score matrix.
 
-    Without confidence weighting, this is
-
-        |alpha_i * alpha_j|,
-
-    which corresponds to the absolute first-order margin sensitivity.
-    With confidence weighting enabled, the coefficients are scaled by
-    ``sigma_safe`` before forming the outer product.
+    The base geometric sensitivity is ``|alpha_i alpha_j|``. If
+    ``use_confidence_weighting`` is enabled, the dual coefficients are first
+    scaled by ``sigma_safe``. If ``uncertainty_weight`` is provided, it is
+    multiplied entrywise into the resulting pairwise matrix so that the final
+    sensitivity score is variance-aware.
     """
     if sigma_safe is None:
         effective_alpha = state.alphas
@@ -232,6 +202,17 @@ def compute_sensitivity_matrix(
         )
 
     sensitivity = np.abs(np.outer(effective_alpha, effective_alpha))
+
+    if uncertainty_weight is not None:
+        weight = np.asarray(uncertainty_weight, dtype=float)
+        check_square_matrix(weight, name="uncertainty_weight")
+        if weight.shape != sensitivity.shape:
+            raise ValueError(
+                "uncertainty_weight must have the same shape as the sensitivity "
+                f"matrix, got {weight.shape} and {sensitivity.shape}."
+            )
+        sensitivity = sensitivity * weight
+
     return upper_triangle_only(sensitivity)
 
 
@@ -253,32 +234,46 @@ def compute_instability_matrix(
     return upper_triangle_only(instability)
 
 
+def normalize_score_matrix(score_matrix: np.ndarray) -> np.ndarray:
+    """Normalize a strict upper-triangular score matrix over independent entries.
+
+    If the matrix has zero total mass in the strict upper triangle, returns
+    the zero matrix.
+    """
+    matrix = np.asarray(score_matrix, dtype=float)
+    check_square_matrix(matrix, name="score_matrix")
+
+    matrix = upper_triangle_only(matrix)
+    total = float(matrix.sum())
+
+    if total <= 0.0:
+        return np.zeros_like(matrix)
+
+    return matrix / total
+
+
 def combine_score_matrices(
     sensitivity_matrix: np.ndarray,
     instability_matrix: np.ndarray,
     *,
     lambda_weight: float,
-    uncertainty_weight: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Combine score components into the final allocation matrix.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Normalize component matrices separately and combine them with lambda.
 
     Parameters
     ----------
     sensitivity_matrix
-        Strict upper-triangular matrix of sensitivity scores.
+        Strict upper-triangular raw sensitivity score matrix.
     instability_matrix
-        Strict upper-triangular matrix of instability scores.
+        Strict upper-triangular raw instability score matrix.
     lambda_weight
         Convex mixing parameter in ``[0, 1]``.
-    uncertainty_weight
-        Optional full symmetric matrix multiplied entrywise after mixing.
-        In SupportShot this is typically ``sqrt(p(1-p))``.
 
     Returns
     -------
-    tuple[np.ndarray, np.ndarray]
-        ``(combined_matrix, final_scores)`` where both are strict
-        upper-triangular matrices.
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        ``(normalized_sensitivity, normalized_instability, combined_matrix)``
+        where all matrices are strict upper-triangular.
     """
     sensitivity = np.asarray(sensitivity_matrix, dtype=float)
     instability = np.asarray(instability_matrix, dtype=float)
@@ -294,23 +289,15 @@ def combine_score_matrices(
     if not 0.0 <= lambda_weight <= 1.0:
         raise ValueError(f"lambda_weight must lie in [0, 1], got {lambda_weight}.")
 
-    combined = (1.0 - lambda_weight) * upper_triangle_only(
-        sensitivity
-    ) + lambda_weight * upper_triangle_only(instability)
+    normalized_sensitivity = normalize_score_matrix(sensitivity)
+    normalized_instability = normalize_score_matrix(instability)
 
-    if uncertainty_weight is None:
-        final_scores = combined.copy()
-    else:
-        weight = np.asarray(uncertainty_weight, dtype=float)
-        check_square_matrix(weight, name="uncertainty_weight")
-        if weight.shape != sensitivity.shape:
-            raise ValueError(
-                "uncertainty_weight must have the same shape as the score "
-                f"matrices, got {weight.shape} and {sensitivity.shape}."
-            )
-        final_scores = upper_triangle_only(combined * weight)
+    combined = (1.0 - lambda_weight) * normalized_sensitivity + (
+        lambda_weight * normalized_instability
+    )
+    combined = upper_triangle_only(combined)
 
-    return combined, final_scores
+    return normalized_sensitivity, normalized_instability, combined
 
 
 def compute_supportshot_scores(
@@ -327,15 +314,16 @@ def compute_supportshot_scores(
 ) -> ScoreComponents:
     """Compute SupportShot allocation scores from the current store/state.
 
-    This is the main convenience function used by the adaptive algorithm.
-    It mirrors the structure of the original proof-of-concept:
+    The updated score pipeline is:
 
     1. smooth empirical probabilities,
     2. compute kernel variance proxy,
     3. compute per-sample uncertainty ``sigma_f``,
     4. estimate instability probabilities,
-    5. compute sensitivity and instability score matrices,
-    6. combine them and weight by ``sqrt(p(1-p))``.
+    5. compute a variance-aware sensitivity matrix,
+    6. compute an instability matrix,
+    7. normalize both matrices separately over the strict upper triangle,
+    8. combine them using ``lambda_weight``.
     """
     if sigma_floor < 0.0:
         raise ValueError(f"sigma_floor must be non-negative, got {sigma_floor}.")
@@ -363,16 +351,6 @@ def compute_supportshot_scores(
         epsilon=epsilon,
     )
 
-    sensitivity_matrix = compute_sensitivity_matrix(
-        state,
-        sigma_safe=sigma_safe,
-        use_confidence_weighting=use_confidence_weighting,
-    )
-    instability_matrix = compute_instability_matrix(
-        instability_probabilities,
-        c_value=state.c,
-    )
-
     uncertainty_weight = np.sqrt(
         np.clip(
             smoothed_probabilities * (1.0 - smoothed_probabilities),
@@ -382,12 +360,28 @@ def compute_supportshot_scores(
     )
     np.fill_diagonal(uncertainty_weight, 0.0)
 
-    combined_matrix, final_scores = combine_score_matrices(
+    sensitivity_matrix = compute_sensitivity_matrix(
+        state,
+        sigma_safe=sigma_safe,
+        use_confidence_weighting=use_confidence_weighting,
+        uncertainty_weight=uncertainty_weight,
+    )
+    instability_matrix = compute_instability_matrix(
+        instability_probabilities,
+        c_value=state.c,
+    )
+
+    (
+        normalized_sensitivity_matrix,
+        normalized_instability_matrix,
+        combined_matrix,
+    ) = combine_score_matrices(
         sensitivity_matrix,
         instability_matrix,
         lambda_weight=lambda_weight,
-        uncertainty_weight=uncertainty_weight,
     )
+
+    final_scores = combined_matrix.copy()
 
     return ScoreComponents(
         smoothed_probabilities=smoothed_probabilities,
@@ -397,6 +391,8 @@ def compute_supportshot_scores(
         instability_probabilities=instability_probabilities,
         sensitivity_matrix=sensitivity_matrix,
         instability_matrix=instability_matrix,
+        normalized_sensitivity_matrix=normalized_sensitivity_matrix,
+        normalized_instability_matrix=normalized_instability_matrix,
         combined_matrix=combined_matrix,
         final_scores=final_scores,
         uncertainty_weight=uncertainty_weight,
