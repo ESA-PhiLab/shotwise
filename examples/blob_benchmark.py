@@ -209,7 +209,7 @@ def save_standard_plots(df, output_dir: Path) -> None:
         ("jaccard", r"$J_{SV}$", "linear"),
         ("jaccard_weighted", r"$J_{SV}^{w}$", "linear"),
         ("margin_err", r"$\delta_{\mathrm{margin}}$", "log"),
-        ("func_rmse", r"$\mathrm{RMSE}_f$", "log"),
+        ("func_rmse_normalized", r"$\mathrm{RMSE}_f$", "log"),
         ("acc_train_vs_true", r"$\mathrm{Acc}_{\mathrm{vs\ true}}$", "linear"),
     ]
 

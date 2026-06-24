@@ -101,3 +101,14 @@ coverage.xml
 # ---------------------------------------
 *.prof
 *.lprof
+
+
+# -------------------------
+# Experiment outputs
+# -------------------------
+outputs/
+plots/
+
+# Any generated plots
+*.png
+*.pdf
