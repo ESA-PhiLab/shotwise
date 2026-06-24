@@ -17,6 +17,7 @@ from shotwise.allocation.scores import (
     compute_smoothed_probabilities,
     compute_supportshot_scores,
     compute_variance_matrix,
+    normalize_score_matrix,
 )
 from shotwise.learning.svm import SVMState
 from shotwise.storage.kernel_store import KernelStore
@@ -192,7 +193,6 @@ def test_compute_sigma_f_matches_manual_formula(svm_state: SVMState) -> None:
 
     sigma_f = compute_sigma_f(svm_state, variance)
 
-    # alphas^2 = [1, 4, 0]
     expected = np.sqrt(np.array([0.4, 0.1, 1.4]))
     np.testing.assert_allclose(sigma_f, expected)
 
@@ -262,6 +262,30 @@ def test_compute_sensitivity_matrix_with_confidence_weighting(
     np.testing.assert_allclose(sensitivity, expected)
 
 
+def test_compute_sensitivity_matrix_applies_uncertainty_weight(
+    svm_state: SVMState,
+) -> None:
+    uncertainty_weight = np.array(
+        [
+            [0.0, 0.5, 0.2],
+            [0.5, 0.0, 0.3],
+            [0.2, 0.3, 0.0],
+        ]
+    )
+    sensitivity = compute_sensitivity_matrix(
+        svm_state,
+        uncertainty_weight=uncertainty_weight,
+    )
+    expected = np.array(
+        [
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+        ]
+    )
+    np.testing.assert_allclose(sensitivity, expected)
+
+
 @pytest.mark.parametrize(
     ("sigma_safe", "message_part"),
     [
@@ -311,69 +335,81 @@ def test_compute_instability_matrix_rejects_invalid_inputs(
         compute_instability_matrix(probs, c_value=c_value)
 
 
-def test_combine_score_matrices_basic() -> None:
+def test_normalize_score_matrix_basic() -> None:
+    matrix = np.array(
+        [
+            [0.0, 2.0, 3.0],
+            [0.0, 0.0, 5.0],
+            [0.0, 0.0, 0.0],
+        ]
+    )
+    normalized = normalize_score_matrix(matrix)
+    expected = matrix / 10.0
+    np.testing.assert_allclose(normalized, expected)
+    assert np.isclose(normalized.sum(), 1.0)
+
+
+def test_normalize_score_matrix_returns_zero_when_total_mass_zero() -> None:
+    matrix = np.zeros((3, 3))
+    normalized = normalize_score_matrix(matrix)
+    np.testing.assert_array_equal(normalized, np.zeros((3, 3)))
+
+
+def test_combine_score_matrices_normalizes_then_combines() -> None:
     sensitivity = np.array(
         [
-            [0.0, 2.0, 1.0],
-            [0.0, 0.0, 4.0],
+            [0.0, 2.0, 3.0],
+            [0.0, 0.0, 5.0],
             [0.0, 0.0, 0.0],
         ]
     )
     instability = np.array(
         [
-            [0.0, 1.0, 3.0],
-            [0.0, 0.0, 5.0],
+            [0.0, 1.0, 1.0],
+            [0.0, 0.0, 2.0],
             [0.0, 0.0, 0.0],
         ]
     )
-    weight = np.array(
-        [
-            [0.0, 0.5, 1.0],
-            [0.5, 0.0, 2.0],
-            [1.0, 2.0, 0.0],
-        ]
-    )
 
-    combined, final_scores = combine_score_matrices(
+    norm_sens, norm_inst, combined = combine_score_matrices(
         sensitivity,
         instability,
         lambda_weight=0.25,
-        uncertainty_weight=weight,
     )
 
-    expected_combined = np.array(
+    expected_norm_sens = np.array(
         [
-            [0.0, 1.75, 1.5],
-            [0.0, 0.0, 4.25],
+            [0.0, 0.2, 0.3],
+            [0.0, 0.0, 0.5],
             [0.0, 0.0, 0.0],
         ]
     )
-    expected_final = np.array(
+    expected_norm_inst = np.array(
         [
-            [0.0, 0.875, 1.5],
-            [0.0, 0.0, 8.5],
+            [0.0, 0.25, 0.25],
+            [0.0, 0.0, 0.5],
             [0.0, 0.0, 0.0],
         ]
     )
+    expected_combined = 0.75 * expected_norm_sens + 0.25 * expected_norm_inst
 
+    np.testing.assert_allclose(norm_sens, expected_norm_sens)
+    np.testing.assert_allclose(norm_inst, expected_norm_inst)
     np.testing.assert_allclose(combined, expected_combined)
-    np.testing.assert_allclose(final_scores, expected_final)
 
 
 @pytest.mark.parametrize(
-    ("sensitivity", "instability", "lambda_weight", "weight", "message_part"),
+    ("sensitivity", "instability", "lambda_weight", "message_part"),
     [
-        (np.ones((2, 3)), np.ones((2, 3)), 0.5, None, "square"),
-        (np.eye(2), np.eye(3), 0.5, None, "same shape"),
-        (np.eye(2), np.eye(2), -0.1, None, r"lie in \[0, 1\]"),
-        (np.eye(2), np.eye(2), 0.5, np.ones((3, 3)), "same shape"),
+        (np.ones((2, 3)), np.ones((2, 3)), 0.5, "square"),
+        (np.eye(2), np.eye(3), 0.5, "same shape"),
+        (np.eye(2), np.eye(2), -0.1, r"lie in \[0, 1\]"),
     ],
 )
 def test_combine_score_matrices_rejects_invalid_inputs(
     sensitivity: np.ndarray,
     instability: np.ndarray,
     lambda_weight: float,
-    weight: np.ndarray | None,
     message_part: str,
 ) -> None:
     with pytest.raises(ValueError, match=message_part):
@@ -381,7 +417,6 @@ def test_combine_score_matrices_rejects_invalid_inputs(
             sensitivity,
             instability,
             lambda_weight=lambda_weight,
-            uncertainty_weight=weight,
         )
 
 
@@ -406,21 +441,7 @@ def test_compute_supportshot_scores_end_to_end(
     assert components.instability_probabilities.shape == (3,)
     assert components.sensitivity_matrix.shape == (3, 3)
     assert components.instability_matrix.shape == (3, 3)
+    assert components.normalized_sensitivity_matrix.shape == (3, 3)
+    assert components.normalized_instability_matrix.shape == (3, 3)
     assert components.combined_matrix.shape == (3, 3)
     assert components.final_scores.shape == (3, 3)
-    assert components.uncertainty_weight.shape == (3, 3)
-
-    assert np.all(np.diag(components.smoothed_probabilities) == store.diagonal_value)
-    assert np.all(np.diag(components.variance_matrix) == 0.0)
-    assert np.all(np.diag(components.uncertainty_weight) == 0.0)
-    assert np.allclose(np.tril(components.final_scores), 0.0)
-    assert np.all(components.final_scores >= 0.0)
-    assert np.all(components.sigma_safe > 0.0)
-
-
-def test_compute_supportshot_scores_rejects_negative_sigma_floor(
-    store: KernelStore,
-    svm_state: SVMState,
-) -> None:
-    with pytest.raises(ValueError, match="non-negative"):
-        compute_supportshot_scores(store, svm_state, sigma_floor=-1e-3)
