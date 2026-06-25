@@ -58,3 +58,12 @@ Please configure your Qiskit account using:
 or environment variables.
 
 Never store tokens in code.
+
+
+Install optional quantum dependencies with:
+
+    pip install -e .[qiskit]
+
+For plotting and benchmark scripts:
+
+    pip install -e .[qiskit,examples]
