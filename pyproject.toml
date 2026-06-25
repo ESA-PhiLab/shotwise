@@ -50,7 +50,8 @@ dev = [
 qiskit = [
   "qiskit>=1.0",
   "qiskit-ibm-runtime>=0.30",
-  "qiskit-machine-learning>=0.7"
+  "qiskit-machine-learning>=0.7",
+  "qiskit-aer>=0.14"
 ]
 pennylane = [
   "pennylane>=0.45",
