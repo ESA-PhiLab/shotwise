@@ -1,5 +1,7 @@
 """
 Qiskit backend with round-based batched execution.
+This backend evaluates kernel probabilities and then locally samples Bernoulli counts!
+It's a classical resampling method.
 
 Key features:
 - One backend call = one algorithm round
