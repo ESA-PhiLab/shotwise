@@ -1,7 +1,7 @@
-"""import numpy as np
+import numpy as np
 import pytest
 
-from shotwise.backends.qiskit_backend import QiskitBackend
+from shotwise.backends.qiskit_probability_backend import QiskitBackend
 
 # ============================================================
 # Dummy kernel (no Qiskit dependency)
@@ -183,4 +183,3 @@ def test_invalid_kernel_rejected(simple_data):
 
     with pytest.raises(ValueError):
         QiskitBackend(simple_data, kernel=BadKernel())
-"""
