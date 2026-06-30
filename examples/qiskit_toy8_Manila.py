@@ -32,9 +32,9 @@ from qiskit_ibm_runtime import SamplerV2 as Sampler
 from qiskit_ibm_runtime.fake_provider import FakeFez, FakeManilaV2
 from qiskit_machine_learning.kernels import FidelityQuantumKernel
 from qiskit_machine_learning.state_fidelities import ComputeUncompute
-from shotwise.backends.qiskit_backend import QiskitBackend
 
 from shotwise.algorithms.supportshot import SupportShot
+from shotwise.backends.qiskit_probability_backend import QiskitBackend
 from shotwise.learning.svm import fit_precomputed_svm_state
 from shotwise.storage.kernel_store import KernelStore
 from shotwise.utils.matrix import upper_triangle_indices
