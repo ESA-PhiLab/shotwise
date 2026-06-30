@@ -72,7 +72,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-circuits-per-job",
         type=int,
-        default=16,
+        default=100,
         help=(
             "Passed both to FidelityQuantumKernel and the backend wrapper to "
             "limit per-job circuit count."
@@ -115,10 +115,10 @@ def build_toy_dataset() -> tuple[np.ndarray, np.ndarray]:
     x = np.array(
         [
             [0.10, 0.15],
-            [0.18, 0.28],
+            # [0.18, 0.28],
             [0.28, 0.10],
             [0.55, 0.55],
-            [1.20, 1.10],
+            # [1.20, 1.10],
             [1.35, 1.25],
             [1.10, 1.38],
             [0.82, 0.88],
@@ -126,6 +126,7 @@ def build_toy_dataset() -> tuple[np.ndarray, np.ndarray]:
         dtype=float,
     )
     y = np.array([-1, -1, -1, -1, 1, 1, 1, 1], dtype=int)
+    y = np.array([-1, -1, -1, 1, 1, 1], dtype=int)
     return x, y
 
 
