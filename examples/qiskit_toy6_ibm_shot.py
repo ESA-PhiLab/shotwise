@@ -152,6 +152,11 @@ def parse_args() -> argparse.Namespace:
         help="Run only adaptive. Useful if IBM quota is limited.",
     )
     parser.add_argument(
+        "--only-uniform",
+        action="store_true",
+        help="Run only the uniform baseline and skip adaptive.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("outputs/qiskit_toy6_ibm_shot"),
@@ -327,6 +332,14 @@ def save_kernel_heatmap(matrix: np.ndarray, output_path: Path, title: str) -> No
     plt.close(fig)
 
 
+def sorted_rounds(df: pd.DataFrame) -> list[int]:
+    rounds: list[int] = []
+    for value in df["method"].unique():
+        if isinstance(value, str) and value.startswith("round_"):
+            rounds.append(int(value.split("_")[1]))
+    return sorted(rounds)
+
+
 def save_line_plot(
     df: pd.DataFrame,
     *,
@@ -351,14 +364,6 @@ def save_line_plot(
     fig.tight_layout()
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
-
-
-def sorted_rounds(df: pd.DataFrame) -> list[int]:
-    rounds: list[int] = []
-    for value in df["method"].unique():
-        if isinstance(value, str) and value.startswith("round_"):
-            rounds.append(int(value.split("_")[1]))
-    return sorted(rounds)
 
 
 def serialize_job_record(job_record: Any) -> dict[str, Any]:
@@ -439,8 +444,8 @@ def save_diagnostics(
     x: np.ndarray,
     y: np.ndarray,
     kernel_true: np.ndarray,
-    adaptive_model: SupportShot,
-    adaptive_recorder: RecordingShotBackend,
+    adaptive_model: SupportShot | None,
+    adaptive_recorder: RecordingShotBackend | None,
     uniform_kernel: np.ndarray | None,
     uniform_recorder: RecordingShotBackend | None,
 ) -> None:
@@ -452,31 +457,32 @@ def save_diagnostics(
         kernel_true=kernel_true,
     )
 
-    save_supportshot_history(adaptive_model, output_dir)
-    save_measurement_records(
-        adaptive_recorder.measurement_records,
-        output_prefix=output_dir / "adaptive_measurements",
-    )
-
-    for idx, record in enumerate(adaptive_model.history_):
-        label = f"{record.stage}_{record.round_index}"
-        save_heatmap(
-            record.allocation_matrix,
-            output_dir / f"allocation_{idx}_{label}.png",
-            f"Adaptive allocation: {label}",
-        )
-        save_kernel_heatmap(
-            record.kernel_matrix,
-            output_dir / f"kernel_{idx}_{label}.png",
-            f"Adaptive kernel: {label}",
+    if adaptive_model is not None and adaptive_recorder is not None:
+        save_supportshot_history(adaptive_model, output_dir)
+        save_measurement_records(
+            adaptive_recorder.measurement_records,
+            output_prefix=output_dir / "adaptive_measurements",
         )
 
-    for idx, measurement in enumerate(adaptive_recorder.measurement_records):
-        save_heatmap(
-            measurement["measured_counts"],
-            output_dir / f"counts_adaptive_call_{idx}.png",
-            f"Adaptive measured counts call {idx}",
-        )
+        for idx, record in enumerate(adaptive_model.history_):
+            label = f"{record.stage}_{record.round_index}"
+            save_heatmap(
+                record.allocation_matrix,
+                output_dir / f"allocation_{idx}_{label}.png",
+                f"Adaptive allocation: {label}",
+            )
+            save_kernel_heatmap(
+                record.kernel_matrix,
+                output_dir / f"kernel_{idx}_{label}.png",
+                f"Adaptive kernel: {label}",
+            )
+
+        for idx, measurement in enumerate(adaptive_recorder.measurement_records):
+            save_heatmap(
+                measurement["measured_counts"],
+                output_dir / f"counts_adaptive_call_{idx}.png",
+                f"Adaptive measured counts call {idx}",
+            )
 
     save_kernel_heatmap(
         kernel_true,
@@ -509,8 +515,38 @@ def save_diagnostics(
             )
 
 
+def collect_job_records(
+    adaptive_backend: RecordingShotBackend | None,
+    uniform_recorder: RecordingShotBackend | None,
+) -> pd.DataFrame:
+    """Collect per-job metadata from adaptive and/or uniform recorders."""
+    all_job_records: list[dict[str, Any]] = []
+
+    if adaptive_backend is not None:
+        for measurement in adaptive_backend.measurement_records:
+            for job_record in measurement["job_records"]:
+                item = dict(job_record)
+                item["arm"] = "adaptive"
+                item["call_index"] = measurement["call_index"]
+                all_job_records.append(item)
+
+    if uniform_recorder is not None:
+        for measurement in uniform_recorder.measurement_records:
+            for job_record in measurement["job_records"]:
+                item = dict(job_record)
+                item["arm"] = "uniform"
+                item["call_index"] = measurement["call_index"]
+                all_job_records.append(item)
+
+    return pd.DataFrame(all_job_records)
+
+
 def main() -> None:
     args = parse_args()
+
+    if args.skip_uniform and args.only_uniform:
+        raise ValueError("Cannot use both --skip-uniform and --only-uniform.")
+
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -567,6 +603,7 @@ def main() -> None:
         "optimization_level": int(args.optimization_level),
         "use_pub_shots": bool(use_pub_shots),
         "skip_uniform": bool(args.skip_uniform),
+        "only_uniform": bool(args.only_uniform),
         "seed": int(args.seed),
     }
     with (output_dir / "config.json").open("w", encoding="utf-8") as f:
@@ -576,53 +613,59 @@ def main() -> None:
     for key, value in config.items():
         print(f"{key:24s} = {value}")
 
-    raw_adaptive_backend = make_ibm_shot_backend(
-        x,
-        feature_map,
-        input_parameters,
-        ibm_backend=ibm_backend,
-        optimization_level=args.optimization_level,
-        max_circuits_per_job=args.max_circuits_per_job,
-        use_pub_shots=use_pub_shots,
-    )
-    adaptive_backend = RecordingShotBackend(raw_adaptive_backend, name="adaptive")
-
-    model = SupportShot(
-        total_budget=total_budget,
-        pilot_shots_per_entry=args.pilot_shots,
-        rounds=args.rounds,
-        lambda_weight=args.lambda_weight,
-        svm_c=args.c,
-        allocation_method=args.allocation_method,
-        random_state=args.seed,
-    )
-
-    print("\n=== Running adaptive SupportShot on IBM backend ===")
-    model.fit(y, adaptive_backend)
-
     records: list[dict[str, float | int | str]] = []
-    for record in model.history_:
-        entry = evaluate_estimated_kernel(
-            kernel_true,
-            record.kernel_matrix,
-            y,
-            c=args.c,
-            method=method_label_from_round(record.stage, record.round_index),
-            round_id=record.round_index,
-        )
-        entry.update(
-            {
-                "run": 0,
-                "stage": record.stage,
-                "budget": record.budget,
-                "total_shots_spent": record.total_shots_spent,
-                "stopped_early": record.stopped_early,
-            }
-        )
-        records.append(entry)
+    model: SupportShot | None = None
+    adaptive_backend: RecordingShotBackend | None = None
+    uniform_kernel: np.ndarray | None = None
+    uniform_recorder: RecordingShotBackend | None = None
 
-    uniform_kernel = None
-    uniform_recorder = None
+    if not args.only_uniform:
+        raw_adaptive_backend = make_ibm_shot_backend(
+            x,
+            feature_map,
+            input_parameters,
+            ibm_backend=ibm_backend,
+            optimization_level=args.optimization_level,
+            max_circuits_per_job=args.max_circuits_per_job,
+            use_pub_shots=use_pub_shots,
+        )
+        adaptive_backend = RecordingShotBackend(
+            raw_adaptive_backend,
+            name="adaptive",
+        )
+
+        model = SupportShot(
+            total_budget=total_budget,
+            pilot_shots_per_entry=args.pilot_shots,
+            rounds=args.rounds,
+            lambda_weight=args.lambda_weight,
+            svm_c=args.c,
+            allocation_method=args.allocation_method,
+            random_state=args.seed,
+        )
+
+        print("\n=== Running adaptive SupportShot on IBM backend ===")
+        model.fit(y, adaptive_backend)
+
+        for record in model.history_:
+            entry = evaluate_estimated_kernel(
+                kernel_true,
+                record.kernel_matrix,
+                y,
+                c=args.c,
+                method=method_label_from_round(record.stage, record.round_index),
+                round_id=record.round_index,
+            )
+            entry.update(
+                {
+                    "run": 0,
+                    "stage": record.stage,
+                    "budget": record.budget,
+                    "total_shots_spent": record.total_shots_spent,
+                    "stopped_early": record.stopped_early,
+                }
+            )
+            records.append(entry)
 
     if not args.skip_uniform:
         print("\n=== Running uniform baseline on IBM backend ===")
@@ -671,21 +714,20 @@ def main() -> None:
         uniform_recorder=uniform_recorder,
     )
 
-    summary_df = df.copy()
     save_line_plot(
-        summary_df,
+        df,
         metric="func_rmse",
         output_path=output_dir / "func_rmse_progress.png",
         title="Decision-function RMSE vs round",
     )
     save_line_plot(
-        summary_df,
+        df,
         metric="margin_err",
         output_path=output_dir / "margin_err_progress.png",
         title="Margin error vs round",
     )
     save_line_plot(
-        summary_df,
+        df,
         metric="jaccard",
         output_path=output_dir / "jaccard_progress.png",
         title="Support-vector Jaccard vs round",
@@ -695,29 +737,14 @@ def main() -> None:
     print_summary(df)
 
     print("\n=== Job records ===")
-    all_job_records = []
-
-    for measurement in adaptive_backend.measurement_records:
-        for job_record in measurement["job_records"]:
-            job_record = dict(job_record)
-            job_record["arm"] = "adaptive"
-            job_record["call_index"] = measurement["call_index"]
-            all_job_records.append(job_record)
-
-    if uniform_recorder is not None:
-        for measurement in uniform_recorder.measurement_records:
-            for job_record in measurement["job_records"]:
-                job_record = dict(job_record)
-                job_record["arm"] = "uniform"
-                job_record["call_index"] = measurement["call_index"]
-                all_job_records.append(job_record)
-
-    job_df = pd.DataFrame(all_job_records)
+    job_df = collect_job_records(adaptive_backend, uniform_recorder)
     job_csv = output_dir / "job_records.csv"
     job_df.to_csv(job_csv, index=False)
     print(job_df)
 
-    final_methods = [f"round_{args.rounds}"]
+    final_methods = []
+    if not args.only_uniform:
+        final_methods.append(f"round_{args.rounds}")
     if not args.skip_uniform:
         final_methods.append("uniform")
     final_df = df[df["method"].isin(final_methods)]
