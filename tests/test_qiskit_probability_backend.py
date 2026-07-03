@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from shotwise.backends.qiskit_backend import QiskitBackend
+from shotwise.backends.qiskit_probability_backend import QiskitBackend
 
 # ============================================================
 # Dummy kernel (no Qiskit dependency)
