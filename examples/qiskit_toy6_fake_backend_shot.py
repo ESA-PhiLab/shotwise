@@ -103,15 +103,17 @@ def build_toy_dataset() -> tuple[np.ndarray, np.ndarray]:
     x = np.array(
         [
             [0.10, 0.15],
+            [0.18, 0.28],
             [0.28, 0.10],
             [0.55, 0.55],
+            [1.20, 1.10],
             [1.35, 1.25],
             [1.10, 1.38],
             [0.82, 0.88],
         ],
         dtype=float,
     )
-    y = np.array([-1, -1, -1, 1, 1, 1], dtype=int)
+    y = np.array([-1, -1, -1, -1, 1, 1, 1, 1], dtype=int)
     return x, y
 
 
@@ -124,10 +126,10 @@ def build_feature_map() -> tuple[QuantumCircuit, list[Any]]:
     theta = ParameterVector("x", 2)
 
     qc = QuantumCircuit(2)
-    qc.ry(theta[0], 0)
-    qc.ry(theta[1], 1)
-    qc.cz(0, 1)
-
+    for _ in range(2):
+        qc.ry(theta[0], 0)
+        qc.ry(theta[1], 1)
+        qc.cz(0, 1)
     return qc, list(theta)
 
 

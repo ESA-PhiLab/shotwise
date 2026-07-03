@@ -114,7 +114,16 @@ def parse_args() -> argparse.Namespace:
             "direct sampler shots."
         ),
     )
-    parser.add_argument("--backend", type=str, default="ibm_fez")
+
+    parser.add_argument(
+        "--backend",
+        type=str,
+        default="ibm_fez",
+        help=(
+            "IBM backend name, e.g. 'ibm_fez', or 'least_busy' to select the "
+            "least busy operational non-simulator backend."
+        ),
+    )
     parser.add_argument("--shots-per-entry", type=int, default=30)
     parser.add_argument("--pilot-shots", type=int, default=8)
     parser.add_argument("--rounds", type=int, default=2)
@@ -165,19 +174,24 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_toy_dataset() -> tuple[np.ndarray, np.ndarray]:
-    """Return the fixed 6-point toy dataset in angle space."""
+    """Return the fixed toy dataset currently used in the example.
+
+    This is the 6-point reduced version from your current script.
+    """
     x = np.array(
         [
             [0.10, 0.15],
+            [0.18, 0.28],
             [0.28, 0.10],
             [0.55, 0.55],
+            [1.20, 1.10],
             [1.35, 1.25],
             [1.10, 1.38],
             [0.82, 0.88],
         ],
         dtype=float,
     )
-    y = np.array([-1, -1, -1, 1, 1, 1], dtype=int)
+    y = np.array([-1, -1, -1, -1, 1, 1, 1, 1], dtype=int)
     return x, y
 
 
@@ -185,9 +199,10 @@ def build_feature_map() -> tuple[QuantumCircuit, list[Any]]:
     """Build a shallow 2-qubit angle-encoding feature map."""
     theta = ParameterVector("x", 2)
     qc = QuantumCircuit(2)
-    qc.ry(theta[0], 0)
-    qc.ry(theta[1], 1)
-    qc.cz(0, 1)
+    for _ in range(2):
+        qc.ry(theta[0], 0)
+        qc.ry(theta[1], 1)
+        qc.cz(0, 1)
     return qc, list(theta)
 
 
@@ -259,6 +274,21 @@ def make_ibm_shot_backend(
         max_circuits_per_job=max_circuits_per_job,
         use_pub_shots=use_pub_shots,
     )
+
+
+def select_ibm_backend(service: QiskitRuntimeService, backend_name: str):
+    """Select IBM backend by name or choose the least busy backend."""
+    if backend_name == "least_busy":
+        backend = service.least_busy(
+            operational=True,
+            simulator=False,
+        )
+        print(f"Selected least busy backend: {backend.name}")
+        return backend
+
+    backend = service.backend(backend_name)
+    print(f"Selected requested backend: {backend.name}")
+    return backend
 
 
 def run_uniform_baseline(
@@ -569,7 +599,7 @@ def main() -> None:
     save_dataset_plot(x, y, output_dir / "dataset.png")
 
     service = QiskitRuntimeService()
-    ibm_backend = service.backend(args.backend)
+    ibm_backend = select_ibm_backend(service, args.backend)
 
     ref_kernel = make_reference_kernel(feature_map)
     kernel_true = np.asarray(ref_kernel.evaluate(x), dtype=float)
