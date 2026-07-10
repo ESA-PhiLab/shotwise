@@ -75,7 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("outputs/qiskit_toy8_fakefez"),
+        default=Path("outputs/qiskit_toy8_fakeManilla"),
     )
     return parser.parse_args()
 
