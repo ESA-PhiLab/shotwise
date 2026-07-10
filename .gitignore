@@ -112,3 +112,9 @@ plots/
 # Any generated plots
 *.png
 *.pdf
+
+
+.coverage
+coverage.xm*
+
+site/
