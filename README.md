@@ -179,7 +179,7 @@ Current methods focus on adaptive measurement allocation for kernelized SVMs. On
 
 If you use ShotWise in academic work, please cite the accompanying publication.
 
-Citation information will be added upon publication.
+Miroszewski, Artur. "Adaptive Measurement Allocation for Learning Kernelized SVMs Under Noisy Observations." arXiv preprint arXiv:2605.22275 (2026).
 
 ---
 
