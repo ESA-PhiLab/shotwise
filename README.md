@@ -177,12 +177,23 @@ Current methods focus on adaptive measurement allocation for kernelized SVMs. On
 
 ## Citation
 
-If you use ShotWise in academic work, please cite the accompanying publication.
+If you use ShotWise in academic work, please cite:
 
-Miroszewski, Artur. "Adaptive Measurement Allocation for Learning Kernelized SVMs Under Noisy Observations." arXiv preprint arXiv:2605.22275 (2026).
+```bibtex
+@article{miroszewski2026adaptive,
+  author = {Miroszewski, Artur},
+  title = {Adaptive Measurement Allocation for Learning Kernelized SVMs Under Noisy Observations},
+  journal = {arXiv preprint arXiv:2605.22275},
+  year = {2026}
+}
+```
+
+A machine-readable citation is also available in `CITATION.cff`.
 
 ---
 
 ## License
 
-License information will be added before the first public release.
+ShotWise is released under the Apache License 2.0.
+
+See the [LICENSE] file for details.
