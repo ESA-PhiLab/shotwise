@@ -45,6 +45,7 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 .cache/
+development_restart.md
 
 # ---------------------------------------
 # IDE / editors
@@ -112,3 +113,9 @@ plots/
 # Any generated plots
 *.png
 *.pdf
+
+
+.coverage
+coverage.xm*
+
+site/

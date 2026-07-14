@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+title: ShotWise
+message: >
+  If you use ShotWise in academic work, please cite the accompanying paper.
+type: software
+
+authors:
+  - family-names: Miroszewski
+    given-names: Artur
+
+repository-code: https://github.com/<your-github-account>/shotwise
+
+license: Apache-2.0
+
+preferred-citation:
+  type: article
+  authors:
+    - family-names: Miroszewski
+      given-names: Artur
+  title: Adaptive Measurement Allocation for Learning Kernelized SVMs Under Noisy Observations
+  journal: arXiv
+  year: 2026
+  volume: arXiv:2605.22275
