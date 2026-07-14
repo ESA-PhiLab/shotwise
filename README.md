@@ -49,6 +49,16 @@ Under fixed budgets, this can improve:
 
 ---
 
+## Associated Publication
+
+Miroszewski, A.
+
+*Adaptive Measurement Allocation for Learning Kernelized SVMs Under Noisy Observations.*
+
+arXiv:2605.22275 (2026).
+
+---
+
 ## Features
 
 - Adaptive allocation for noisy kernel estimation
@@ -105,6 +115,11 @@ qiskit_ibm_runtime save-account --token YOUR_TOKEN
 ```
 
 or environment variables supported by Qiskit Runtime.
+
+You can also add your IBM token with
+```bash
+python examples/qiskit_setup_account.py
+```
 
 **Never store authentication tokens in source code.**
 
@@ -196,4 +211,4 @@ A machine-readable citation is also available in `CITATION.cff`.
 
 ShotWise is released under the Apache License 2.0.
 
-See the [LICENSE] file for details.
+See the `LICENSE` file for details.

@@ -45,6 +45,7 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 .cache/
+development_restart.md
 
 # ---------------------------------------
 # IDE / editors
