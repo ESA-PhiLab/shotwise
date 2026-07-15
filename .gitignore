@@ -107,8 +107,7 @@ coverage.xml
 # -------------------------
 # Experiment outputs
 # -------------------------
-outputs/
-plots/
+#outputs/
 
 # Any generated plots
 *.png
