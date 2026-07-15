@@ -80,8 +80,12 @@ class SyntheticBernoulliBackend:
     ValueError
         If the kernel matrix is not square, not symmetric, or contains values
         outside the interval [0, 1].
-    TODO: Check noise.
-    DISCLAIMER: Use noiseless only for the moment!
+
+    Notes
+    -----
+    The default configuration uses independent Bernoulli sampling without
+    additional synthetic drift. Optional global and local Gaussian perturbations
+    can be enabled for exploratory experiments.
     """
 
     def __init__(
