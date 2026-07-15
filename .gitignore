@@ -118,3 +118,6 @@ coverage.xml
 coverage.xm*
 
 site/
+
+# Local development notes
+development_restart.md
