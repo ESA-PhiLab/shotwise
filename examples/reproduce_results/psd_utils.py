@@ -199,3 +199,117 @@ def psd_diagnostics(
         "is_psd": bool(values[0] >= -eps),
         "spectral_tolerance": float(eps),
     }
+
+
+def principal_submatrix(
+    matrix: ArrayLike,
+    indices: ArrayLike,
+) -> NDArray[np.float64]:
+    """Return the principal submatrix selected by integer indices."""
+    symmetric = _symmetrize(matrix)
+    index_array = np.asarray(indices, dtype=int)
+
+    if index_array.ndim != 1:
+        raise ValueError("indices must be a one-dimensional array.")
+
+    if index_array.size == 0:
+        raise ValueError("indices must contain at least one element.")
+
+    if np.any(index_array < 0) or np.any(index_array >= symmetric.shape[0]):
+        raise ValueError("indices contain an out-of-range matrix index.")
+
+    if np.unique(index_array).size != index_array.size:
+        raise ValueError("indices must not contain duplicates.")
+
+    return symmetric[np.ix_(index_array, index_array)]
+
+
+def relative_frobenius_error(
+    matrix_estimated: ArrayLike,
+    matrix_reference: ArrayLike,
+) -> float:
+    """Return relative Frobenius reconstruction error."""
+    estimated = _symmetrize(matrix_estimated)
+    reference = _symmetrize(matrix_reference)
+
+    if estimated.shape != reference.shape:
+        raise ValueError(
+            "Estimated and reference matrices must have the same shape, "
+            f"got {estimated.shape} and {reference.shape}."
+        )
+
+    denominator = float(np.linalg.norm(reference, ord="fro"))
+
+    if denominator == 0.0:
+        raise ValueError(
+            "Relative Frobenius error is undefined for a zero reference matrix."
+        )
+
+    numerator = float(np.linalg.norm(estimated - reference, ord="fro"))
+    return numerator / denominator
+
+
+def support_vector_block_error(
+    kernel_estimated: ArrayLike,
+    kernel_reference: ArrayLike,
+    support_indices: ArrayLike,
+) -> float:
+    """Return relative Frobenius error on the oracle support-vector block."""
+    estimated_block = principal_submatrix(
+        kernel_estimated,
+        support_indices,
+    )
+    reference_block = principal_submatrix(
+        kernel_reference,
+        support_indices,
+    )
+
+    return relative_frobenius_error(
+        estimated_block,
+        reference_block,
+    )
+
+
+def relative_dual_quadratic_error(
+    kernel_estimated: ArrayLike,
+    kernel_reference: ArrayLike,
+    signed_dual_coefficients: ArrayLike,
+) -> float:
+    """Return relative error of the ideal SVM dual quadratic form.
+
+    Let beta = Y alpha denote the signed ideal SVM dual coefficients. The
+    diagnostic is
+
+        |beta.T @ (K_estimated - K_reference) @ beta|
+        ------------------------------------------------.
+             |beta.T @ K_reference @ beta|
+
+    Entries of beta outside the ideal support-vector set are zero, so this
+    quantity automatically weights only classifier-relevant kernel entries.
+    """
+    estimated = _symmetrize(kernel_estimated)
+    reference = _symmetrize(kernel_reference)
+    beta = np.asarray(signed_dual_coefficients, dtype=float)
+
+    if estimated.shape != reference.shape:
+        raise ValueError("Estimated and reference kernels must have the same shape.")
+
+    if beta.ndim != 1 or beta.shape[0] != reference.shape[0]:
+        raise ValueError(
+            "signed_dual_coefficients must be a one-dimensional array "
+            "with one entry per kernel row."
+        )
+
+    if not np.all(np.isfinite(beta)):
+        raise ValueError("signed_dual_coefficients contains non-finite values.")
+
+    denominator = float(abs(beta @ reference @ beta))
+
+    if denominator == 0.0:
+        raise ValueError(
+            "The reference dual quadratic form is zero, so relative error is undefined."
+        )
+
+    numerator = float(abs(beta @ (estimated - reference) @ beta))
+
+    return numerator / denominator
