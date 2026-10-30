@@ -208,7 +208,7 @@ def save_main_figure(
     xscale_lambda: str,
     yscale_lambda: str,
 ) -> None:
-    """Save the two-panel spectral PSD figure."""
+    """Save the two-panel PSD figure using the manuscript plotting style."""
     shot_values = np.array(sorted(df["shots_per_entry"].unique()))
 
     relative_mass_data = [
@@ -232,18 +232,50 @@ def save_main_figure(
         if minimum_lambda <= 0.0:
             raise ValueError(
                 "--yscale-lambda log cannot be used because lambda_min "
-                "contains zero or negative values. Use linear scaling."
+                "contains zero or negative values."
             )
 
+    # Manuscript-style parameters.
+    figure_blue = "#4C78A8"
+    edge_color = "black"
+
+    boxprops = {
+        "facecolor": figure_blue,
+        "edgecolor": edge_color,
+        "linewidth": 0.8,
+        "alpha": 0.80,
+    }
+    medianprops = {
+        "color": edge_color,
+        "linewidth": 1.1,
+    }
+    whiskerprops = {
+        "color": edge_color,
+        "linewidth": 0.8,
+    }
+    capprops = {
+        "color": edge_color,
+        "linewidth": 0.8,
+    }
+    flierprops = {
+        "marker": "o",
+        "markerfacecolor": "none",
+        "markeredgecolor": edge_color,
+        "markeredgewidth": 0.6,
+        "markersize": 2.5,
+        "alpha": 0.55,
+    }
+
+    # Compact double-column layout.
     fig, axes = plt.subplots(
         1,
         2,
-        figsize=(10.0, 4.0),
+        figsize=(7.2, 3.0),
     )
 
-    # For a logarithmic x-axis, boxplot positions must use the actual shot
-    # values. For a linear categorical display, equally spaced positions make
-    # the individual budgets easier to read.
+    # --------------------------------------------------------------
+    # (a) Relative negative spectral mass
+    # --------------------------------------------------------------
     if xscale_mass == "log":
         mass_positions = shot_values.astype(float)
         mass_widths = np.maximum(0.12 * mass_positions, 0.1)
@@ -255,22 +287,41 @@ def save_main_figure(
         relative_mass_data,
         positions=mass_positions,
         widths=mass_widths,
-        showfliers=False,
+        patch_artist=True,
+        showfliers=True,
+        boxprops=boxprops,
+        medianprops=medianprops,
+        whiskerprops=whiskerprops,
+        capprops=capprops,
+        flierprops=flierprops,
     )
+
     axes[0].set_xscale(xscale_mass)
     axes[0].set_yscale(yscale_mass)
 
-    if xscale_mass == "linear":
-        axes[0].set_xticks(mass_positions)
-        axes[0].set_xticklabels(shot_values, rotation=45)
-    else:
-        axes[0].set_xticks(shot_values)
-        axes[0].set_xticklabels(shot_values, rotation=45)
+    axes[0].set_xticks(mass_positions)
+    axes[0].set_xticklabels(
+        shot_values,
+        rotation=45,
+        ha="right",
+    )
 
-    axes[0].set_xlabel("Shots per kernel entry")
-    axes[0].set_ylabel("Relative negative spectral mass")
-    axes[0].set_title("(a) Magnitude of PSD violation")
+    axes[0].set_xlabel(
+        "Shots per kernel entry",
+        fontsize=9,
+    )
+    axes[0].set_ylabel(
+        r"Relative negative spectral mass $\rho_-(\widehat{K})$",
+        fontsize=9,
+    )
+    axes[0].set_title(
+        "(a) Negative spectral mass",
+        fontsize=10,
+    )
 
+    # --------------------------------------------------------------
+    # (b) Minimum eigenvalue
+    # --------------------------------------------------------------
     if xscale_lambda == "log":
         lambda_positions = shot_values.astype(float)
         lambda_widths = np.maximum(0.12 * lambda_positions, 0.1)
@@ -282,29 +333,80 @@ def save_main_figure(
         lambda_min_data,
         positions=lambda_positions,
         widths=lambda_widths,
-        showfliers=False,
+        patch_artist=True,
+        showfliers=True,
+        boxprops=boxprops,
+        medianprops=medianprops,
+        whiskerprops=whiskerprops,
+        capprops=capprops,
+        flierprops=flierprops,
     )
+
     axes[1].set_xscale(xscale_lambda)
     axes[1].set_yscale(yscale_lambda)
 
-    if xscale_lambda == "linear":
-        axes[1].set_xticks(lambda_positions)
-        axes[1].set_xticklabels(shot_values, rotation=45)
-    else:
-        axes[1].set_xticks(shot_values)
-        axes[1].set_xticklabels(shot_values, rotation=45)
+    axes[1].set_xticks(lambda_positions)
+    axes[1].set_xticklabels(
+        shot_values,
+        rotation=45,
+        ha="right",
+    )
 
+    # lambda_min = 0 is the boundary between PSD and indefinite matrices.
     axes[1].axhline(
         0.0,
         color="black",
-        linewidth=1.0,
+        linewidth=0.9,
         linestyle="--",
+        zorder=0,
     )
-    axes[1].set_xlabel("Shots per kernel entry")
-    axes[1].set_ylabel(r"Minimum eigenvalue $\lambda_{\min}(\widehat{K})$")
-    axes[1].set_title("(b) Worst spectral PSD violation")
 
-    fig.tight_layout()
+    axes[1].annotate(
+        "PSD boundary",
+        xy=(0.98, 0.97),
+        xycoords="axes fraction",
+        ha="right",
+        va="top",
+        fontsize=7.5,
+    )
+
+    axes[1].set_xlabel(
+        "Shots per kernel entry",
+        fontsize=9,
+    )
+    axes[1].set_ylabel(
+        r"Minimum eigenvalue $\lambda_{\min}(\widehat{K})$",
+        fontsize=9,
+    )
+    axes[1].set_title(
+        "(b) Minimum eigenvalue",
+        fontsize=10,
+    )
+
+    # Common manuscript styling.
+    for ax in axes:
+        ax.tick_params(
+            axis="both",
+            which="major",
+            labelsize=8,
+            width=0.8,
+        )
+        ax.tick_params(
+            axis="both",
+            which="minor",
+            width=0.6,
+        )
+
+        for spine in ax.spines.values():
+            spine.set_linewidth(0.8)
+
+        # Keep the plots visually clean, matching the existing figures.
+        ax.grid(False)
+
+    fig.tight_layout(
+        pad=0.7,
+        w_pad=1.2,
+    )
 
     fig.savefig(
         output_dir / "finite_shot_psd.png",
