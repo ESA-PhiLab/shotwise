@@ -8,8 +8,8 @@ kernel matrix. The exact kernel is then repeatedly estimated with a uniform
 number of Bernoulli measurements per off-diagonal kernel entry.
 
 For each shot budget, the experiment records spectral diagnostics of the
-estimated kernel and summarizes how the degree and frequency of
-indefiniteness change as measurement precision increases.
+estimated kernel and summarizes how the magnitude of indefiniteness changes
+as measurement precision increases.
 
 Example
 -------
@@ -22,6 +22,14 @@ From the repository root:
         --cluster-std 0.2 \
         --shots-per-entry 1 2 5 10 20 50 100 200 500 1000 \
         --output-dir outputs/finite_shot_psd
+
+Axis scales can be selected independently:
+
+    python examples/reproduce_results/finite_shot_psd.py \
+        --xscale-mass log \
+        --yscale-mass log \
+        --xscale-lambda log \
+        --yscale-lambda linear
 """
 
 from __future__ import annotations
@@ -59,6 +67,35 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dataset-seed", type=int, default=0)
     parser.add_argument("--measurement-seed", type=int, default=1)
+
+    parser.add_argument(
+        "--xscale-mass",
+        choices=["linear", "log"],
+        default="linear",
+        help="X-axis scale for the negative spectral mass panel.",
+    )
+    parser.add_argument(
+        "--yscale-mass",
+        choices=["linear", "log"],
+        default="linear",
+        help="Y-axis scale for the negative spectral mass panel.",
+    )
+    parser.add_argument(
+        "--xscale-lambda",
+        choices=["linear", "log"],
+        default="linear",
+        help="X-axis scale for the minimum-eigenvalue panel.",
+    )
+    parser.add_argument(
+        "--yscale-lambda",
+        choices=["linear", "log"],
+        default="linear",
+        help=(
+            "Y-axis scale for the minimum-eigenvalue panel. "
+            "Note that ordinary log scale cannot display negative eigenvalues."
+        ),
+    )
+
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -165,9 +202,14 @@ def summarize_results(df: pd.DataFrame) -> pd.DataFrame:
 def save_main_figure(
     df: pd.DataFrame,
     output_dir: Path,
+    *,
+    xscale_mass: str,
+    yscale_mass: str,
+    xscale_lambda: str,
+    yscale_lambda: str,
 ) -> None:
-    """Save the two-panel figure used to summarize the experiment."""
-    shot_values = sorted(df["shots_per_entry"].unique())
+    """Save the two-panel spectral PSD figure."""
+    shot_values = np.array(sorted(df["shots_per_entry"].unique()))
 
     relative_mass_data = [
         df.loc[
@@ -177,14 +219,21 @@ def save_main_figure(
         for shots in shot_values
     ]
 
-    indefinite_probability = [
-        1.0
-        - df.loc[
+    lambda_min_data = [
+        df.loc[
             df["shots_per_entry"] == shots,
-            "is_psd",
-        ].mean()
+            "lambda_min",
+        ].to_numpy()
         for shots in shot_values
     ]
+
+    if yscale_lambda == "log":
+        minimum_lambda = min(float(np.min(values)) for values in lambda_min_data)
+        if minimum_lambda <= 0.0:
+            raise ValueError(
+                "--yscale-lambda log cannot be used because lambda_min "
+                "contains zero or negative values. Use linear scaling."
+            )
 
     fig, axes = plt.subplots(
         1,
@@ -192,27 +241,68 @@ def save_main_figure(
         figsize=(10.0, 4.0),
     )
 
+    # For a logarithmic x-axis, boxplot positions must use the actual shot
+    # values. For a linear categorical display, equally spaced positions make
+    # the individual budgets easier to read.
+    if xscale_mass == "log":
+        mass_positions = shot_values.astype(float)
+        mass_widths = np.maximum(0.12 * mass_positions, 0.1)
+    else:
+        mass_positions = np.arange(len(shot_values), dtype=float)
+        mass_widths = 0.5
+
     axes[0].boxplot(
         relative_mass_data,
-        positions=np.arange(len(shot_values)),
+        positions=mass_positions,
+        widths=mass_widths,
         showfliers=False,
     )
-    axes[0].set_xticks(np.arange(len(shot_values)))
-    axes[0].set_xticklabels(shot_values, rotation=45)
+    axes[0].set_xscale(xscale_mass)
+    axes[0].set_yscale(yscale_mass)
+
+    if xscale_mass == "linear":
+        axes[0].set_xticks(mass_positions)
+        axes[0].set_xticklabels(shot_values, rotation=45)
+    else:
+        axes[0].set_xticks(shot_values)
+        axes[0].set_xticklabels(shot_values, rotation=45)
+
     axes[0].set_xlabel("Shots per kernel entry")
     axes[0].set_ylabel("Relative negative spectral mass")
     axes[0].set_title("(a) Magnitude of PSD violation")
 
-    axes[1].plot(
-        shot_values,
-        indefinite_probability,
-        marker="o",
+    if xscale_lambda == "log":
+        lambda_positions = shot_values.astype(float)
+        lambda_widths = np.maximum(0.12 * lambda_positions, 0.1)
+    else:
+        lambda_positions = np.arange(len(shot_values), dtype=float)
+        lambda_widths = 0.5
+
+    axes[1].boxplot(
+        lambda_min_data,
+        positions=lambda_positions,
+        widths=lambda_widths,
+        showfliers=False,
     )
-    axes[1].set_xscale("log")
-    axes[1].set_ylim(-0.02, 1.02)
+    axes[1].set_xscale(xscale_lambda)
+    axes[1].set_yscale(yscale_lambda)
+
+    if xscale_lambda == "linear":
+        axes[1].set_xticks(lambda_positions)
+        axes[1].set_xticklabels(shot_values, rotation=45)
+    else:
+        axes[1].set_xticks(shot_values)
+        axes[1].set_xticklabels(shot_values, rotation=45)
+
+    axes[1].axhline(
+        0.0,
+        color="black",
+        linewidth=1.0,
+        linestyle="--",
+    )
     axes[1].set_xlabel("Shots per kernel entry")
-    axes[1].set_ylabel("Probability of indefinite estimate")
-    axes[1].set_title("(b) Frequency of PSD violation")
+    axes[1].set_ylabel(r"Minimum eigenvalue $\lambda_{\min}(\widehat{K})$")
+    axes[1].set_title("(b) Worst spectral PSD violation")
 
     fig.tight_layout()
 
@@ -253,6 +343,10 @@ def main() -> None:
     print(f"shots_per_entry   = {args.shots_per_entry}")
     print(f"dataset_seed      = {args.dataset_seed}")
     print(f"measurement_seed  = {args.measurement_seed}")
+    print(f"xscale_mass       = {args.xscale_mass}")
+    print(f"yscale_mass       = {args.yscale_mass}")
+    print(f"xscale_lambda     = {args.xscale_lambda}")
+    print(f"yscale_lambda     = {args.yscale_lambda}")
     print(f"output_dir        = {output_dir}")
     print()
 
@@ -281,8 +375,6 @@ def main() -> None:
     print(f"is_psd = {true_diagnostics['is_psd']}")
     print()
 
-    # Save the fixed dataset and exact kernel so the experiment is completely
-    # reproducible and the exact reference can be reused in later analyses.
     np.savez(
         output_dir / "reference_kernel.npz",
         x=x,
@@ -318,6 +410,7 @@ def main() -> None:
             records.append(record)
 
     df = pd.DataFrame.from_records(records)
+
     raw_results_path = output_dir / "finite_shot_psd_results.csv"
     df.to_csv(raw_results_path, index=False)
 
@@ -325,7 +418,14 @@ def main() -> None:
     summary_path = output_dir / "finite_shot_psd_summary.csv"
     summary.to_csv(summary_path, index=False)
 
-    save_main_figure(df, output_dir)
+    save_main_figure(
+        df,
+        output_dir,
+        xscale_mass=args.xscale_mass,
+        yscale_mass=args.yscale_mass,
+        xscale_lambda=args.xscale_lambda,
+        yscale_lambda=args.yscale_lambda,
+    )
 
     print()
     print("=== Summary ===")
