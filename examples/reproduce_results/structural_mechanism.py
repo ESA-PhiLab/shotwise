@@ -150,9 +150,16 @@ def generate_dataset(
     random_state: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Generate a balanced binary blob dataset with labels in {-1, +1}."""
+    centers = np.array(
+        [
+            [-1.0, 0.0],
+            [1.0, 0.0],
+        ]
+    )
+
     x, y = make_blobs(
         n_samples=n_samples,
-        centers=2,
+        centers=centers,
         cluster_std=cluster_std,
         random_state=random_state,
     )
