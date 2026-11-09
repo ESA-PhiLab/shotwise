@@ -108,6 +108,11 @@ coverage.xml
 # -------------------------
 outputs/
 
+# -------------------------
+# Quantum experiment data
+# -------------------------
+data/quantum_kernels/
+
 # Any generated plots
 *.png
 *.pdf
