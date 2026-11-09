@@ -1,21 +1,21 @@
-"""Download Indian Pines quantum training kernels used by the manuscript.
+"""Download Indian Pines quantum kernels and reconstruct training labels.
 
-The large precomputed kernel matrices are maintained in the external
-Large_scale_QSVM repository and are intentionally not committed to ShotWise.
+The precomputed quantum kernel matrices and the original Indian Pines fold
+files are maintained in the external Large_scale_QSVM repository. They are
+intentionally not committed to ShotWise.
 
-This script performs a sparse Git checkout of only the Indian Pines
-bandwidth-kernel directory and copies the quantum training kernels into the
-local ShotWise data directory.
+This script:
 
-By default, only files satisfying all of the following are retained:
+1. sparsely checks out the bandwidth Indian Pines kernel matrices,
+2. sparsely checks out the four original Indian Pines fold directories,
+3. copies the quantum training kernels locally,
+4. reconstructs the binary training labels used for classes 3 and 10,
+5. validates the reconstructed labels against the kernel dimensions,
+6. saves the labels and source provenance locally.
 
-- quantum kernels,
-- training kernels,
-- NumPy ``.npy`` files,
-- not iCloud placeholder files.
-
-The source repository can later be pinned to an immutable commit or tag using
-``--source-ref``.
+The historical data-preparation procedure maps class 3 to label 0 and class
+10 to label 1, shuffles the available training/validation population using
+random_state=0, and performs a stratified split with n_train=50 and n_val=50.
 
 Example
 -------
@@ -23,7 +23,7 @@ From the ShotWise repository root:
 
     python examples/reproduce_results/download_indian_pines_kernels.py
 
-To pin an explicit revision:
+To pin the external repository to an immutable revision:
 
     python examples/reproduce_results/download_indian_pines_kernels.py \
         --source-ref <commit-or-tag>
@@ -40,10 +40,19 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+from sklearn.model_selection import StratifiedShuffleSplit
 
 DEFAULT_REPOSITORY = "https://github.com/ArturMiroszewski/Large_scale_QSVM"
-DEFAULT_SOURCE_PATH = "bandwidth/results/indian/kernel_matrices"
-DEFAULT_OUTPUT_DIR = Path("data/quantum_kernels/indian_pines/bandwidth")
+DEFAULT_KERNEL_PATH = "bandwidth/results/indian/kernel_matrices"
+DEFAULT_FOLD_ROOT = "data/Indian Pines"
+DEFAULT_OUTPUT_DIR = Path("data/quantum_kernels/indian_pines")
+
+CLASS_1 = 3
+CLASS_2 = 10
+N_TRAIN = 50
+N_VAL = 50
+RANDOM_STATE = 0
+N_FOLDS = 4
 
 
 @dataclass(frozen=True)
@@ -62,45 +71,38 @@ def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         description=(
-            "Download Indian Pines quantum training kernels from Large_scale_QSVM."
+            "Download Indian Pines quantum kernels and reconstruct "
+            "the original binary training labels."
         )
     )
     parser.add_argument(
         "--repository",
         default=DEFAULT_REPOSITORY,
-        help="Git repository containing the precomputed kernels.",
     )
     parser.add_argument(
         "--source-ref",
         default=None,
         help=(
-            "Optional immutable Git commit, tag, or branch to checkout. "
-            "If omitted, the repository default branch is used."
+            "Optional Git commit, tag, or branch. If omitted, the "
+            "repository default branch is used."
         ),
     )
     parser.add_argument(
-        "--source-path",
-        default=DEFAULT_SOURCE_PATH,
-        help="Repository-relative directory containing kernel matrices.",
+        "--kernel-path",
+        default=DEFAULT_KERNEL_PATH,
+    )
+    parser.add_argument(
+        "--fold-root",
+        default=DEFAULT_FOLD_ROOT,
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
-        help="Local directory in which downloaded kernels are stored.",
-    )
-    parser.add_argument(
-        "--include-test",
-        action="store_true",
-        help=(
-            "Also copy quantum test kernels. By default only training "
-            "kernels required by the ShotWise experiment are retained."
-        ),
     )
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Overwrite existing local kernel files.",
     )
     return parser.parse_args()
 
@@ -109,32 +111,29 @@ def run_git(
     *args: str,
     cwd: Path | None = None,
 ) -> str:
-    """Run Git and return stripped standard output."""
-    command = ["git", *args]
-
+    """Run git and return stdout."""
     result = subprocess.run(
-        command,
+        ["git", *args],
         cwd=cwd,
         check=True,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-
     return result.stdout.strip()
 
 
-def parse_kernel_filename(path: Path) -> KernelMetadata | None:
-    """Parse metadata encoded in a quantum kernel filename."""
+def parse_kernel_filename(
+    path: Path,
+) -> KernelMetadata | None:
+    """Parse metadata encoded in one quantum kernel filename."""
     name = path.name
 
-    if not name.endswith(".npy"):
-        return None
-
-    if name.startswith("."):
-        return None
-
-    if not name.startswith("quantum_"):
+    if (
+        not name.endswith(".npy")
+        or name.startswith(".")
+        or not name.startswith("quantum_")
+    ):
         return None
 
     split_match = re.search(
@@ -174,50 +173,14 @@ def parse_kernel_filename(path: Path) -> KernelMetadata | None:
     )
 
 
-def validate_kernel(path: Path) -> tuple[int, float, float]:
-    """Load and minimally validate one kernel matrix."""
-    kernel = np.load(path)
-
-    if kernel.ndim != 2:
-        raise ValueError(
-            f"{path.name}: expected a 2D matrix, got shape {kernel.shape}."
-        )
-
-    if kernel.shape[0] != kernel.shape[1]:
-        raise ValueError(f"{path.name}: expected a square matrix, got {kernel.shape}.")
-
-    if kernel.shape[0] == 0:
-        raise ValueError(f"{path.name}: kernel matrix is empty.")
-
-    if not np.all(np.isfinite(kernel)):
-        raise ValueError(f"{path.name}: kernel contains non-finite values.")
-
-    minimum = float(np.min(kernel))
-    maximum = float(np.max(kernel))
-
-    # SyntheticBernoulliBackend interprets kernel entries as Bernoulli
-    # probabilities. Small floating-point excursions are tolerated, but
-    # materially invalid probability values are rejected.
-    tolerance = 1e-8
-
-    if minimum < -tolerance or maximum > 1.0 + tolerance:
-        raise ValueError(
-            f"{path.name}: kernel values fall outside the expected "
-            f"[0, 1] probability range: min={minimum:.6g}, "
-            f"max={maximum:.6g}."
-        )
-
-    return kernel.shape[0], minimum, maximum
-
-
 def sparse_checkout(
     *,
     repository: str,
     source_ref: str | None,
-    source_path: str,
+    paths: list[str],
     work_dir: Path,
 ) -> tuple[Path, str]:
-    """Sparse-checkout only the requested source directory."""
+    """Sparse-checkout the required external data paths."""
     repository_dir = work_dir / "Large_scale_QSVM"
 
     run_git(
@@ -234,10 +197,11 @@ def sparse_checkout(
         "--cone",
         cwd=repository_dir,
     )
+
     run_git(
         "sparse-checkout",
         "set",
-        source_path,
+        *paths,
         cwd=repository_dir,
     )
 
@@ -253,78 +217,199 @@ def sparse_checkout(
             cwd=repository_dir,
         )
 
-    resolved_revision = run_git(
+    revision = run_git(
         "rev-parse",
         "HEAD",
         cwd=repository_dir,
     )
 
-    return repository_dir, resolved_revision
+    return repository_dir, revision
+
+
+def patch_number(path: Path) -> int:
+    """Return the numerical patch identifier for sorting."""
+    match = re.search(
+        r"patch_(\d+)(?:_gt)?\.npy$",
+        path.name,
+    )
+
+    if match is None:
+        raise ValueError(f"Could not parse patch number from {path.name!r}.")
+
+    return int(match.group(1))
+
+
+def load_fold_ground_truth(
+    fold_dir: Path,
+) -> np.ndarray:
+    """Recreate the concatenated Y_all vector used by prepare_indian.py."""
+    gt_files = sorted(
+        fold_dir.glob("patch_*_gt.npy"),
+        key=patch_number,
+    )
+
+    if not gt_files:
+        raise FileNotFoundError(f"No patch ground-truth files found in {fold_dir}.")
+
+    arrays: list[np.ndarray] = []
+
+    for path in gt_files:
+        ground_truth = np.load(path)
+        arrays.append(np.asarray(ground_truth).reshape(-1))
+
+    return np.concatenate(arrays)
+
+
+def reconstruct_training_labels(
+    y_all: np.ndarray,
+    *,
+    class_1: int,
+    class_2: int,
+    n_train: int,
+    n_val: int,
+    random_state: int,
+) -> np.ndarray:
+    """Reproduce the historical binary train-label split."""
+    n_class_1 = int(np.count_nonzero(y_all == class_1))
+    n_class_2 = int(np.count_nonzero(y_all == class_2))
+
+    if n_class_1 == 0 or n_class_2 == 0:
+        raise ValueError("One or both requested classes are absent from the fold.")
+
+    # prepare_classes_fold() selected class-1 samples first and class-2
+    # samples second, then mapped them to 0 and 1 respectively.
+    labels = np.concatenate(
+        [
+            np.zeros(
+                n_class_1,
+                dtype=int,
+            ),
+            np.ones(
+                n_class_2,
+                dtype=int,
+            ),
+        ]
+    )
+
+    # prepare_folds() first shuffled the combined train/validation pool.
+    rng = np.random.default_rng(seed=random_state)
+    permutation = rng.permutation(labels.size)
+    labels = labels[permutation]
+
+    if n_train + n_val > labels.size:
+        raise ValueError(
+            f"Requested n_train={n_train} and n_val={n_val}, "
+            f"but only {labels.size} class-selected samples are available."
+        )
+
+    splitter = StratifiedShuffleSplit(
+        n_splits=1,
+        train_size=n_train,
+        test_size=n_val,
+        random_state=random_state,
+    )
+
+    # The split indices depend only on the stratification labels and random
+    # state; feature values are irrelevant for reconstructing Y_train.
+    dummy_features = np.zeros(
+        (labels.size, 1),
+        dtype=float,
+    )
+
+    train_index, _ = next(
+        splitter.split(
+            dummy_features,
+            labels,
+        )
+    )
+
+    return labels[train_index]
+
+
+def validate_kernel(
+    path: Path,
+) -> tuple[int, float, float]:
+    """Validate one downloaded kernel matrix."""
+    kernel = np.load(path)
+
+    if kernel.ndim != 2 or kernel.shape[0] != kernel.shape[1]:
+        raise ValueError(f"{path.name}: expected square matrix, got {kernel.shape}.")
+
+    if not np.all(np.isfinite(kernel)):
+        raise ValueError(f"{path.name}: non-finite values found.")
+
+    minimum = float(kernel.min())
+    maximum = float(kernel.max())
+
+    tolerance = 1e-8
+
+    if minimum < -tolerance or maximum > 1.0 + tolerance:
+        raise ValueError(
+            f"{path.name}: values outside expected [0, 1] range: "
+            f"[{minimum:.6g}, {maximum:.6g}]."
+        )
+
+    return (
+        kernel.shape[0],
+        minimum,
+        maximum,
+    )
 
 
 def main() -> None:
-    """Download and validate the required quantum training kernels."""
+    """Download kernels and reconstruct the four training-label vectors."""
     args = parse_args()
 
-    args.output_dir.mkdir(
+    bandwidth_dir = args.output_dir / "bandwidth"
+    bandwidth_dir.mkdir(
         parents=True,
         exist_ok=True,
     )
 
+    fold_paths = [f"{args.fold_root}/indiana_fold_{fold}" for fold in range(N_FOLDS)]
+
+    sparse_paths = [
+        args.kernel_path,
+        *fold_paths,
+    ]
+
     with tempfile.TemporaryDirectory(
-        prefix="indian_pines_kernels_"
+        prefix="indian_pines_repro_"
     ) as temporary_directory:
-        work_dir = Path(temporary_directory)
-
-        print("Sparse-checking external kernel repository...")
-
         repository_dir, revision = sparse_checkout(
             repository=args.repository,
             source_ref=args.source_ref,
-            source_path=args.source_path,
-            work_dir=work_dir,
+            paths=sparse_paths,
+            work_dir=Path(temporary_directory),
         )
 
-        source_dir = repository_dir / args.source_path
+        # ------------------------------------------------------
+        # Copy quantum TRAINING kernels only.
+        # ------------------------------------------------------
+        external_kernel_dir = repository_dir / args.kernel_path
 
-        if not source_dir.exists():
-            raise FileNotFoundError(
-                f"Source directory was not found after checkout: {source_dir}"
-            )
+        kernels: list[tuple[KernelMetadata, int, float, float]] = []
 
-        candidates: list[KernelMetadata] = []
-
-        for path in sorted(source_dir.glob("*.npy")):
+        for path in sorted(external_kernel_dir.glob("quantum_train_*.npy")):
             metadata = parse_kernel_filename(path)
 
             if metadata is None:
                 continue
 
-            if metadata.split == "test" and not args.include_test:
+            if metadata.class_1 != CLASS_1 or metadata.class_2 != CLASS_2:
                 continue
 
-            candidates.append(metadata)
+            destination = bandwidth_dir / path.name
 
-        if not candidates:
-            raise RuntimeError("No matching quantum kernel .npy files were found.")
-
-        copied: list[tuple[KernelMetadata, int, float, float]] = []
-
-        for metadata in candidates:
-            destination = args.output_dir / metadata.path.name
-
-            if destination.exists() and not args.overwrite:
-                print(f"Keeping existing: {destination.name}")
-            else:
+            if not destination.exists() or args.overwrite:
                 shutil.copy2(
-                    metadata.path,
+                    path,
                     destination,
                 )
-                print(f"Copied: {destination.name}")
 
             n_samples, minimum, maximum = validate_kernel(destination)
 
-            copied.append(
+            kernels.append(
                 (
                     metadata,
                     n_samples,
@@ -333,63 +418,117 @@ def main() -> None:
                 )
             )
 
-    print()
-    print("=== Download summary ===")
-    print(f"Repository: {args.repository}")
-    print(f"Revision:   {revision}")
-    print(f"Source:     {args.source_path}")
-    print(f"Output:     {args.output_dir}")
-    print(f"Files:      {len(copied)}")
+        if not kernels:
+            raise RuntimeError("No matching quantum training kernels were found.")
 
-    folds = sorted({metadata.fold for metadata, *_ in copied})
-    qubits = sorted({metadata.qubits for metadata, *_ in copied})
-    class_pairs = sorted(
-        {
-            (
-                metadata.class_1,
-                metadata.class_2,
+        # ------------------------------------------------------
+        # Reconstruct training labels from original fold GT data.
+        # ------------------------------------------------------
+        reconstructed: dict[
+            str,
+            np.ndarray,
+        ] = {}
+
+        for fold in range(N_FOLDS):
+            fold_dir = repository_dir / args.fold_root / f"indiana_fold_{fold}"
+
+            y_all = load_fold_ground_truth(fold_dir)
+
+            y_train = reconstruct_training_labels(
+                y_all,
+                class_1=CLASS_1,
+                class_2=CLASS_2,
+                n_train=N_TRAIN,
+                n_val=N_VAL,
+                random_state=RANDOM_STATE,
             )
-            for metadata, *_ in copied
-        }
-    )
-    sample_sizes = sorted({n_samples for _, n_samples, _, _ in copied})
 
-    print(f"Folds:      {folds}")
-    print(f"Qubits:     {qubits}")
-    print(f"Classes:    {class_pairs}")
-    print(f"Sizes:      {sample_sizes}")
+            reconstructed[f"fold_{fold}"] = y_train.astype(int)
 
-    print()
-    print("Kernel files:")
-    for (
-        metadata,
-        n_samples,
-        minimum,
-        maximum,
-    ) in copied:
-        print(
-            f"- fold={metadata.fold}, "
-            f"qubits={metadata.qubits:3d}, "
-            f"classes={metadata.class_1:02d}/{metadata.class_2:02d}, "
-            f"n={n_samples:3d}, "
-            f"range=[{minimum:.6g}, {maximum:.6g}] "
-            f"{metadata.path.name}"
+            print(
+                f"fold {fold}: "
+                f"n={y_train.size}, "
+                f"class counts="
+                f"{dict(zip(*np.unique(y_train, return_counts=True), strict=True))}"
+            )
+
+        # ------------------------------------------------------
+        # Validate label length against every kernel.
+        # ------------------------------------------------------
+        for (
+            metadata,
+            n_samples,
+            _,
+            _,
+        ) in kernels:
+            labels = reconstructed[f"fold_{metadata.fold}"]
+
+            if labels.size != n_samples:
+                raise ValueError(
+                    f"{metadata.path.name}: kernel has n={n_samples}, "
+                    f"but reconstructed fold-{metadata.fold} labels "
+                    f"have n={labels.size}."
+                )
+
+        labels_path = args.output_dir / "Indian_train_labels.npz"
+
+        np.savez(
+            labels_path,
+            **reconstructed,
+            class_1=np.asarray(
+                [CLASS_1],
+                dtype=int,
+            ),
+            class_2=np.asarray(
+                [CLASS_2],
+                dtype=int,
+            ),
+            n_train=np.asarray(
+                [N_TRAIN],
+                dtype=int,
+            ),
+            n_val=np.asarray(
+                [N_VAL],
+                dtype=int,
+            ),
+            random_state=np.asarray(
+                [RANDOM_STATE],
+                dtype=int,
+            ),
         )
 
-    revision_file = args.output_dir / "SOURCE_REVISION.txt"
-    revision_file.write_text(
+    provenance_path = args.output_dir / "SOURCE_REVISION.txt"
+
+    provenance_path.write_text(
         "\n".join(
             [
                 f"repository={args.repository}",
                 f"revision={revision}",
-                f"source_path={args.source_path}",
+                f"kernel_path={args.kernel_path}",
+                f"fold_root={args.fold_root}",
+                f"class_1={CLASS_1}",
+                f"class_2={CLASS_2}",
+                f"n_train={N_TRAIN}",
+                f"n_val={N_VAL}",
+                f"random_state={RANDOM_STATE}",
                 "",
             ]
         )
     )
 
+    folds = sorted({metadata.fold for metadata, *_ in kernels})
+    qubits = sorted({metadata.qubits for metadata, *_ in kernels})
+    sample_sizes = sorted({n_samples for _, n_samples, _, _ in kernels})
+
     print()
-    print(f"Source provenance written to: {revision_file}")
+    print("=== Reproduction data summary ===")
+    print(f"Revision: {revision}")
+    print(f"Kernels:  {len(kernels)}")
+    print(f"Folds:    {folds}")
+    print(f"Qubits:   {qubits}")
+    print(f"Sizes:    {sample_sizes}")
+    print(f"Labels:   {labels_path}")
+    print(f"Source:   {provenance_path}")
 
 
 if __name__ == "__main__":
