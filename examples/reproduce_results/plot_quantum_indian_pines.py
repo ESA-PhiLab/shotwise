@@ -1,27 +1,18 @@
-"""Create manuscript plots for the Indian Pines quantum-kernel experiment.
+"""Create manuscript plots for the Indian Pines quantum-kernel experiments.
 
-The system-size panel respects the hierarchical experimental design:
+Produces two independent manuscript panels:
 
-    qubit count
-        -> four Indian Pines folds
-            -> repeated finite-shot measurement realizations.
+1. quantum_system_size.pdf
+   Fold-resolved relative improvement in normalized decision-function RMSE
+   versus quantum-system size.
 
-Measurement realizations are first averaged within each fold and qubit count.
-The four resulting fold trajectories are shown explicitly, together with
-their arithmetic mean.
+2. quantum_budget_sweep.pdf
+   Fold-resolved adaptive and uniform normalized decision-function RMSE
+   versus measurement budget at fixed quantum-system size.
 
-Positive relative improvement means adaptive allocation produces smaller
-normalized decision-function RMSE than uniform allocation.
-
-Example
--------
-From the repository root:
-
-    python examples/reproduce_results/plot_quantum_indian_pines.py \
-        --results \
-        outputs/quantum_indian_pines_no_bandwidth/quantum_indian_pines_results.csv \
-        --output-dir \
-        outputs/quantum_indian_pines_no_bandwidth/manuscript
+Measurement realizations are first averaged within each fold/condition.
+The fold curves therefore represent genuinely different learning problems,
+rather than finite-shot repetitions.
 """
 
 from __future__ import annotations
@@ -33,96 +24,39 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+FOLD_COLORS = {
+    0: "#4e79a7",
+    1: "#669cc8",
+    2: "#8abbd8",
+    3: "#b2d4e7",
+}
+
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description=(
-            "Create manuscript figures for the Indian Pines quantum-kernel experiment."
-        )
-    )
+    parser = argparse.ArgumentParser()
+
     parser.add_argument(
-        "--results",
+        "--system-results",
         type=Path,
         required=True,
-        help="Raw CSV produced by quantum_indian_pines.py.",
+    )
+    parser.add_argument(
+        "--budget-results",
+        type=Path,
+        required=True,
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
         required=True,
     )
+
     return parser.parse_args()
 
 
-def validate_results(df: pd.DataFrame) -> None:
-    """Validate columns required by the system-size panel."""
-    required = {
-        "run",
-        "fold",
-        "n_qubits",
-        "relative_func_rmse_improvement",
-        "adaptive_func_rmse_normalized",
-        "uniform_func_rmse_normalized",
-    }
-
-    missing = required.difference(df.columns)
-
-    if missing:
-        raise ValueError(
-            "Results CSV is missing required columns: " + ", ".join(sorted(missing))
-        )
-
-    if df.empty:
-        raise ValueError("Results CSV is empty.")
-
-    values = df["relative_func_rmse_improvement"].to_numpy(dtype=float)
-
-    if not np.all(np.isfinite(values)):
-        raise ValueError("Relative-RMSE improvement contains non-finite values.")
-
-
-def fold_summary(df: pd.DataFrame) -> pd.DataFrame:
-    """Average measurement realizations within each fold/qubit condition."""
-    return (
-        df.groupby(
-            ["fold", "n_qubits"],
-            sort=True,
-        )
-        .agg(
-            relative_improvement=(
-                "relative_func_rmse_improvement",
-                "mean",
-            ),
-            adaptive_rmse=(
-                "adaptive_func_rmse_normalized",
-                "mean",
-            ),
-            uniform_rmse=(
-                "uniform_func_rmse_normalized",
-                "mean",
-            ),
-            measurement_repetitions=(
-                "run",
-                "count",
-            ),
-        )
-        .reset_index()
-    )
-
-
-def fold_colors() -> dict[int, str]:
-    """Return restrained blue tones for the four folds."""
-    return {
-        0: "#4e79a7",
-        1: "#5f95c8",
-        2: "#86b9da",
-        3: "#b2d4e7",
-    }
-
-
 def style_axis(ax) -> None:
-    """Apply manuscript-compatible axis styling."""
+    """Apply manuscript-compatible styling."""
     ax.tick_params(
         axis="both",
         which="major",
@@ -142,37 +76,79 @@ def style_axis(ax) -> None:
         spine.set_linewidth(0.7)
 
     ax.grid(False)
-    ax.margins(x=0.03)
+    ax.margins(x=0.025)
+
+
+def summarize_system(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Average measurement repetitions inside fold/qubit conditions."""
+    return (
+        df.groupby(
+            ["fold", "n_qubits"],
+            sort=True,
+        )
+        .agg(
+            relative_improvement=(
+                "relative_func_rmse_improvement",
+                "mean",
+            ),
+            repetitions=(
+                "run",
+                "count",
+            ),
+        )
+        .reset_index()
+    )
+
+
+def summarize_budget(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Average measurement repetitions inside fold/budget conditions."""
+    return (
+        df.groupby(
+            ["fold", "budget_per_entry"],
+            sort=True,
+        )
+        .agg(
+            adaptive_rmse=(
+                "adaptive_func_rmse_normalized",
+                "mean",
+            ),
+            uniform_rmse=(
+                "uniform_func_rmse_normalized",
+                "mean",
+            ),
+            repetitions=(
+                "run",
+                "count",
+            ),
+        )
+        .reset_index()
+    )
 
 
 def plot_system_size(
     summary: pd.DataFrame,
     output_dir: Path,
 ) -> None:
-    """Plot fold-aware relative improvement versus quantum-system size."""
-    folds = sorted(int(value) for value in summary["fold"].unique())
+    """Save the fold-resolved system-size panel."""
+    fig, ax = plt.subplots(figsize=(3.6, 2.75))
 
-    if folds != [0, 1, 2, 3]:
-        raise ValueError(f"Expected folds [0, 1, 2, 3], found {folds}.")
-
-    colors = fold_colors()
-
-    fig, ax = plt.subplots(figsize=(3.65, 2.75))
-
-    for fold in folds:
+    for fold in range(4):
         selected = summary.loc[summary["fold"] == fold].sort_values("n_qubits")
 
         ax.plot(
             selected["n_qubits"],
             selected["relative_improvement"],
-            color=colors[fold],
+            color=FOLD_COLORS[fold],
             linewidth=0.95,
             marker="o",
             markersize=3.3,
             markerfacecolor="none",
             markeredgewidth=0.8,
             label=f"Fold {fold}",
-            alpha=0.95,
         )
 
     mean_curve = (
@@ -188,9 +164,9 @@ def plot_system_size(
         mean_curve["n_qubits"],
         mean_curve["relative_improvement"],
         color="black",
-        linewidth=1.55,
+        linewidth=1.65,
         marker="D",
-        markersize=3.8,
+        markersize=3.9,
         label="Fold mean",
         zorder=10,
     )
@@ -199,7 +175,7 @@ def plot_system_size(
         0.0,
         color="black",
         linestyle="--",
-        linewidth=0.8,
+        linewidth=0.75,
         zorder=0,
     )
 
@@ -225,9 +201,11 @@ def plot_system_size(
 
     ax.legend(
         frameon=False,
-        fontsize=6.7,
+        fontsize=6.3,
         ncol=2,
         loc="lower left",
+        columnspacing=0.9,
+        handlelength=2.0,
     )
 
     style_axis(ax)
@@ -247,37 +225,219 @@ def plot_system_size(
     plt.close(fig)
 
 
+def plot_budget(
+    summary: pd.DataFrame,
+    output_dir: Path,
+) -> None:
+    """Save fold-resolved budget panel using paired fold observations."""
+    fig, ax = plt.subplots(figsize=(3.6, 2.75))
+
+    budgets = np.asarray(
+        sorted(summary["budget_per_entry"].unique()),
+        dtype=float,
+    )
+
+    # Small logarithmic horizontal displacement keeps paired adaptive
+    # and uniform observations distinguishable without changing the
+    # interpretation of the budget axis.
+    adaptive_offset = 0.965
+    uniform_offset = 1.035
+
+    for budget in budgets:
+        selected = summary.loc[summary["budget_per_entry"] == budget].sort_values(
+            "fold"
+        )
+
+        if len(selected) != 4:
+            raise ValueError(
+                f"Expected four folds at budget {budget:g}, found {len(selected)}."
+            )
+
+        adaptive_x = budget * adaptive_offset
+        uniform_x = budget * uniform_offset
+
+        for _, row in selected.iterrows():
+            fold = int(row["fold"])
+            color = FOLD_COLORS[fold]
+
+            adaptive_y = float(row["adaptive_rmse"])
+            uniform_y = float(row["uniform_rmse"])
+
+            # Connect the two allocation strategies for the same fold
+            # and budget. These are paired observations on the same
+            # exact kernel.
+            ax.plot(
+                [
+                    adaptive_x,
+                    uniform_x,
+                ],
+                [
+                    adaptive_y,
+                    uniform_y,
+                ],
+                color="#bbbbbb",
+                linewidth=0.55,
+                alpha=0.75,
+                zorder=1,
+            )
+
+            ax.plot(
+                adaptive_x,
+                adaptive_y,
+                linestyle="none",
+                marker="o",
+                markersize=3.5,
+                markerfacecolor=color,
+                markeredgecolor=color,
+                markeredgewidth=0.6,
+                zorder=3,
+            )
+
+            ax.plot(
+                uniform_x,
+                uniform_y,
+                linestyle="none",
+                marker="s",
+                markersize=3.3,
+                markerfacecolor="white",
+                markeredgecolor=color,
+                markeredgewidth=0.8,
+                zorder=3,
+            )
+
+    mean_curve = (
+        summary.groupby(
+            "budget_per_entry",
+            sort=True,
+        )
+        .agg(
+            adaptive_rmse=(
+                "adaptive_rmse",
+                "mean",
+            ),
+            uniform_rmse=(
+                "uniform_rmse",
+                "mean",
+            ),
+        )
+        .reset_index()
+    )
+
+    x_mean = mean_curve["budget_per_entry"].to_numpy(dtype=float)
+
+    # Only the fold means are connected across measurement budgets.
+    ax.plot(
+        x_mean * adaptive_offset,
+        mean_curve["adaptive_rmse"],
+        color="#1f4e79",
+        linestyle="-",
+        linewidth=1.45,
+        marker="o",
+        markersize=4.2,
+        markerfacecolor="#1f4e79",
+        markeredgecolor="#1f4e79",
+        label="Adaptive mean",
+        zorder=6,
+    )
+
+    ax.plot(
+        x_mean * uniform_offset,
+        mean_curve["uniform_rmse"],
+        color="black",
+        linestyle="--",
+        linewidth=1.25,
+        marker="s",
+        markersize=4.0,
+        markerfacecolor="white",
+        markeredgecolor="black",
+        markeredgewidth=0.85,
+        label="Uniform mean",
+        zorder=6,
+    )
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+
+    ax.set_xticks(budgets)
+    ax.set_xticklabels([str(int(value)) for value in budgets])
+
+    ax.set_xlabel(
+        "Measurements per kernel entry",
+        fontsize=8.5,
+    )
+    ax.set_ylabel(
+        r"$\mathrm{RMSE}_f$",
+        fontsize=8.5,
+    )
+
+    ax.legend(
+        frameon=False,
+        fontsize=6.7,
+        loc="upper right",
+        handlelength=2.0,
+    )
+
+    style_axis(ax)
+
+    fig.tight_layout(pad=0.5)
+
+    fig.savefig(
+        output_dir / "quantum_budget_sweep.png",
+        dpi=300,
+        bbox_inches="tight",
+    )
+    fig.savefig(
+        output_dir / "quantum_budget_sweep.pdf",
+        bbox_inches="tight",
+    )
+
+    plt.close(fig)
+
+
 def main() -> None:
-    """Create manuscript plots."""
+    """Generate independent manuscript panels."""
     args = parse_args()
 
-    if not args.results.exists():
-        raise FileNotFoundError(f"Results file not found: {args.results}")
+    if not args.system_results.exists():
+        raise FileNotFoundError(f"System results not found: {args.system_results}")
+
+    if not args.budget_results.exists():
+        raise FileNotFoundError(f"Budget results not found: {args.budget_results}")
 
     args.output_dir.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    df = pd.read_csv(args.results)
-    validate_results(df)
+    system_raw = pd.read_csv(args.system_results)
+    budget_raw = pd.read_csv(args.budget_results)
 
-    summary = fold_summary(df)
+    system_summary = summarize_system(system_raw)
+    budget_summary = summarize_budget(budget_raw)
 
-    summary_path = args.output_dir / "quantum_system_size_fold_summary.csv"
-    summary.to_csv(
-        summary_path,
+    system_summary.to_csv(
+        args.output_dir / "quantum_system_size_fold_summary.csv",
+        index=False,
+    )
+
+    budget_summary.to_csv(
+        args.output_dir / "quantum_budget_fold_summary.csv",
         index=False,
     )
 
     plot_system_size(
-        summary,
+        system_summary,
+        args.output_dir,
+    )
+
+    plot_budget(
+        budget_summary,
         args.output_dir,
     )
 
     print("Saved:")
-    print(f"- Summary: {summary_path}")
-    print(f"- Figure:  {args.output_dir / 'quantum_system_size.pdf'}")
+    print(f"- System-size panel: {args.output_dir / 'quantum_system_size.pdf'}")
+    print(f"- Budget panel:      {args.output_dir / 'quantum_budget_sweep.pdf'}")
 
 
 if __name__ == "__main__":
